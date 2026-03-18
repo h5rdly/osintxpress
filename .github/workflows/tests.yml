@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install Alpine build deps
-        run: apk add --no-cache git patchelf
+        run: apk add --no-cache gcc musl-dev cargo git patchelf
 
       - name: Install dependencies
         run: pip install maturin polars
@@ -76,7 +76,7 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           usesh: true
-          prepare: pkg install -y python313 git
+          prepare: pkg install -y rust python313 git
           run: |
             python3.13 -m venv venv
             . venv/bin/activate
