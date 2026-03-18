@@ -54,7 +54,7 @@ impl OsintEngine {
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // This is the magic bridge: it routes all tracing::info! and tracing::debug! 
     // calls from our Rust background threads directly into Python's `logging` module.
-    pyo3_log::try_init();
+    _ = pyo3_log::try_init();
     
     m.add_class::<OsintEngine>()?;
     Ok(())
