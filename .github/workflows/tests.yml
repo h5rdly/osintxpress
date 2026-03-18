@@ -37,6 +37,7 @@ jobs:
       #   run: python src/mock_server.py
 
       - name: Build Rust library and install
+        shell: bash
         run: |
           maturin build --release
           pip install target/wheels/*.whl
