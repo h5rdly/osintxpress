@@ -28,7 +28,7 @@ reqwest = { version = "0.13.2", default-features = false, features = ["rustls", 
 geo = "0.32.0" 
 h3o = "0.9.4" 
 
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py312"], }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py312"]}
 pyo3-log = "0.13.3"
 #pyo3-polars = { version = "0.26.0", features = ["derive"] }
 
