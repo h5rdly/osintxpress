@@ -16,4 +16,5 @@ dependencies = [
 [project.urls]
 
 [tool.maturin]
+features = ["pyo3/extension-module", "pyo3/abi3-py312"]
 module-name = "osintxpress._osintxpress"

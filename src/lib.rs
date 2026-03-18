@@ -38,7 +38,7 @@ impl OsintEngine {
         // CRITICAL: We explicitly release the GIL while Rust gathers the data.
         // If draining the buffer takes a few milliseconds, other Python threads 
         // can continue executing.
-        let _data = py.allow_threads(|| {
+        let _data = py.detach(|| {
             self.inner.poll_data()
         });
 

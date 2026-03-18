@@ -1,3 +1,1 @@
-from ._osintxpress import OsintEngine, MockServer
-
-__all__ = ["OsintEngine", "MockServer"]
+import osintxpress.osintxpress as osintxpress

@@ -1,5 +1,7 @@
-import time
-import logging
+import sys, time, logging 
+
+sys.path.append(__file__.replace('\\', '/').rsplit('/', 2)[0])
+
 from osintxpress import OsintEngine
 
 # Configure Python's standard logging to catch the Rust tracing events!
@@ -20,7 +22,7 @@ def main():
     time.sleep(3.5)
     
     print("\n--- Polling Data ---")
-    # This will trigger the py.allow_threads block
+    # This will trigger the py.detach block
     data = engine.poll()
     print(f"Data received: {type(data)} -> {data}")
     
