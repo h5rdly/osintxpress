@@ -15,11 +15,12 @@ def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path:
     module_dev_path = module_dev_path or _dev_path_linux
 
     rust_lib = None
-    # try:
-    #     from . import _osintxpress
-    #     rust_lib = _osintxpress
-    # except ImportError:
-    #     pass
+    # Wheel load
+    try:
+        from . import _osintxpress
+        rust_lib = _osintxpress
+    except ImportError:
+        pass
 
     for file in os.listdir(__file__.replace('\\', '/').rsplit('/', 1)[0]):
         if (file.startswith(f'lib{_rust_lib_name}') or file.startswith(_rust_lib_name)) and \
