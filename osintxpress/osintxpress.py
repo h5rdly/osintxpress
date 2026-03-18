@@ -22,7 +22,7 @@ def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path:
     except ImportError:
         pass
 
-    for file in os.listdir(__file__.replace('\\', '/').rsplit('/', 1)[0]):
+    for file in os.listdir(py_dir := __file__.replace('\\', '/').rsplit('/', 1)[0]):
         if (file.startswith(f'lib{_rust_lib_name}') or file.startswith(_rust_lib_name)) and \
            file.endswith(('.so', '.pyd', '.dylib', '.dll')):
             rust_lib = _load_module(_rust_lib_name, f'{py_dir}/{file}')
