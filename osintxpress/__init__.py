@@ -1,1 +1,1 @@
-import osintxpress.osintxpress as osintxpress
+from .osintxpress import *
