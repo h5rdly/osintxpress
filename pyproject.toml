@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.12"]
+build-backend = "maturin"
+
+[project]
+name = "osintxpress"
+dynamic = ["version"]
+description = "High-throughput OSINT ingestion engine for Python"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "polars>=1.39.2"
+]
+
+[project.urls]
+
+[tool.maturin]
+module-name = "osintxpress._osintxpress"
