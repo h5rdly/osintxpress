@@ -67,21 +67,22 @@ jobs:
         run: python tests/test_run.py
 
   # FreeBSD 
-  test-freebsd:
-    name: Test (FreeBSD)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Test in FreeBSD VM
-        uses: vmactions/freebsd-vm@v1
-        with:
-          usesh: true
-          prepare: pkg install -y rust python313 py311-polars git
-          run: |
-            python3.13 -m venv venv
-            . venv/bin/activate
-            pip install maturin polars
-            maturin build --release
-            pip install target/wheels/*.whl
-            # python src/mock_server.py
-            python tests/test_run.py
+  # waiting for py313-polars, as there is no official wheel
+  # test-freebsd:
+  #   name: Test (FreeBSD)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - name: Test in FreeBSD VM
+  #       uses: vmactions/freebsd-vm@v1
+  #       with:
+  #         usesh: true
+  #         prepare: pkg install -y rust python313 py313-polars git
+  #         run: |
+  #           python3.13 -m venv venv
+  #           . venv/bin/activate
+  #           pip install maturin polars
+  #           maturin build --release
+  #           pip install target/wheels/*.whl
+  #           # python src/mock_server.py
+  #           python tests/test_run.py
