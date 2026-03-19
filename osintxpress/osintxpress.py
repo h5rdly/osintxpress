@@ -35,14 +35,15 @@ def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path:
     for file in os.listdir(py_dir):
         if (file.startswith(f'lib{_rust_lib_name}') or file.startswith(_rust_lib_name)) and \
            file.endswith(('.so', '.pyd', '.dylib', '.dll')):
-            return _load_module(_rust_lib_name, f'{py_dir}/{file}')
+            mod = _load_module(_rust_lib_name, f'{py_dir}/{file}')
+            if mod: return mod
     
     # Maturin build in CI
     if os.path.exists(dev_path):
-        return _load_module(_rust_lib_name, dev_path) 
+        mod = _load_module(_rust_lib_name, dev_path)
+        if mod: return mod
 
-    raise ImportError(f'Could not find Rust binary at {dev_path}')
-
+    raise ImportError(f'Could not find Rust binary. Tried local dir and {dev_path}')
 
 _rust_lib = _load_rust_pip_or_dev()
 globals().update({k: v for k, v in vars(_rust_lib).items() if not k.startswith('__')})
