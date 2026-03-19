@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-quick-xml = { version = "0.36.0", features = ["serialize"] } # Extremely fast, allocation-free XML parser for RSS
+quick-xml = { version = "0.36.0", features = ["serialize"] }
 
 arrow = { version = "58.0.0", features = ["pyarrow"] } 
 
@@ -23,6 +23,7 @@ async-trait = "0.1.89"
 axum = { version = "0.8.8", features = ["ws"] }
 tower = "0.5.3" 
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "gzip", "brotli"] }
+# deboa = "0.0.9"
 
 geo = "0.32.0" 
 h3o = "0.9.4" 

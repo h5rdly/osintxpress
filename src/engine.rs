@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 use futures_util::StreamExt; // read from the WebSocket stream
 
 use arrow::record_batch::RecordBatch;
 
-use crate::client::{HttpClient, ReqwestClient};
+use crate::client::{HttpClient, ReqwestClient}; // DeboaClient
 use crate::{RestAdapter, WsAdapter};
 use crate::parser;
 
@@ -31,7 +32,7 @@ pub struct Engine {
     rt: Runtime,
     background_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     rest_sources: Arc<Mutex<Vec<RestSource>>>,
-    ws_sources: Arc<Mutex<Vec<WsSource>>>, // NEW: WebSocket sources
+    ws_sources: Arc<Mutex<Vec<WsSource>>>, 
     buffer: Arc<Mutex<HashMap<String, Vec<String>>>>,
     http_client: Arc<dyn HttpClient>,
 }
@@ -49,7 +50,7 @@ impl Engine {
             rt,
             background_tasks: Arc::new(Mutex::new(Vec::new())),
             rest_sources: Arc::new(Mutex::new(Vec::new())),
-            ws_sources: Arc::new(Mutex::new(Vec::new())), // Initialize
+            ws_sources: Arc::new(Mutex::new(Vec::new())), 
             buffer: Arc::new(Mutex::new(HashMap::new())),
             http_client: Arc::new(ReqwestClient::new()), 
         }
@@ -65,11 +66,12 @@ impl Engine {
 
 
      pub fn stop(&self) {
+
         let mut tasks_guard = self.background_tasks.lock().unwrap();
         for handle in tasks_guard.drain(..) {
             handle.abort();
         }
-        tracing::info!("Stopped all background OSINT tasks.");
+        tracing::info!("Stopped all background OSINT tasks");
     }
 
 
@@ -94,6 +96,7 @@ impl Engine {
             let url = source.url.clone();
             
             let handle = self.rt.spawn(async move {
+
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(source.interval_sec));
                 loop {
                     interval.tick().await; 

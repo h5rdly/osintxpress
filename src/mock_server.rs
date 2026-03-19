@@ -1,3 +1,11 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use pyo3::prelude::*;
+
+use tokio::runtime::Runtime;
+use tokio::sync::oneshot;
+
 use axum::{
     extract::{State, WebSocketUpgrade,},
     extract::ws::{Message, WebSocket, rejection::WebSocketUpgradeRejection},
@@ -6,11 +14,7 @@ use axum::{
     routing::any,
     Router,
 };
-use pyo3::prelude::*;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
+
 
 #[derive(Clone)]
 struct MockResponse {
@@ -18,6 +22,7 @@ struct MockResponse {
     content_type: String,
     payload: String,
 }
+
 
 struct SharedState {
     // Maps (Method, Path) -> MockResponse
@@ -27,6 +32,7 @@ struct SharedState {
     // Maps Path -> Number of times the endpoint was hit
     hit_counts: RwLock<HashMap<String, usize>>,
 }
+
 
 #[pyclass]
 pub struct MockServer {
@@ -40,6 +46,7 @@ pub struct MockServer {
 
 #[pymethods]
 impl MockServer {
+
     #[new]
     #[pyo3(signature = (host = "127.0.0.1", port = 0))]
     fn new(host: &str, port: u16) -> Self {
@@ -74,7 +81,6 @@ impl MockServer {
         let (content_type, payload) = if let Some(json) = json_payload {
             ("application/json", json)
         } else if let Some(raw) = raw_payload {
-            // Can be text, XML, CSV, etc.
             ("text/plain", raw) 
         } else {
             ("text/plain", "")
@@ -119,7 +125,7 @@ impl MockServer {
         let port = self.port;
         let bound_port_clone = self.bound_port.clone();
 
-        // 1. Create a synchronous channel to block the Python thread
+        // Create a synchronous channel to block the Python thread
         let (bind_tx, bind_rx) = std::sync::mpsc::channel();
 
         self.rt.spawn(async move {
@@ -133,7 +139,7 @@ impl MockServer {
             let actual_port = listener.local_addr().unwrap().port();
             *bound_port_clone.lock().unwrap() = Some(actual_port);
             
-            // 2. Signal to the main thread that the port is locked in
+            // Signal to the main thread that the port is locked in
             let _ = bind_tx.send(());
 
             tracing::info!("MockServer live at http://{}:{}", host, actual_port);
@@ -148,7 +154,7 @@ impl MockServer {
             tracing::info!("MockServer gracefully shut down.");
         });
 
-        // 3. Block Python from returning from `start()` until the signal is received
+        // Block Python from returning from `start()` until the signal is received
         bind_rx.recv().expect("MockServer background thread panicked during startup");
     }
 
@@ -159,22 +165,18 @@ impl MockServer {
     }
 }
 
-/// The universal handler that intercepts all requests, increments the counter,
-/// and returns the configured payload.
 async fn handle_request(
     State(state): State<Arc<SharedState>>,
-    // Option<WebSocketUpgrade> swallows the rejection if headers are missing, 
-    // cleanly returning None for standard REST requests.
     method: Method,
     uri: Uri,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     let path = uri.path().to_string();
     
-    // 1. Increment hit count
+    // Increment hit count
     *state.hit_counts.write().unwrap().entry(path.clone()).or_insert(0) += 1;
 
-    // 2. Handle WebSocket Upgrades
+    // Handle WebSocket Upgrades
     if let Ok(ws_upgrade) = ws {
         let is_ws_route = state.ws_routes.read().unwrap().contains_key(&path);
         if is_ws_route {
@@ -183,8 +185,6 @@ async fn handle_request(
             
             return ws_upgrade.on_upgrade(move |mut socket: WebSocket| async move {
                 for msg in messages {
-                    // We map the String to the appropriate format. 
-                    // `.into()` handles compatibility for both Axum 0.7 (String) and 0.8 (Utf8Bytes).
                     if socket.send(Message::from(msg)).await.is_err() {
                         tracing::warn!("Client disconnected before receiving all WS messages");
                         break;
@@ -194,7 +194,7 @@ async fn handle_request(
         }
     }
 
-    // 3. Handle REST Requests
+    // Handle REST Requests
     let route_key = (method.as_str().to_string(), path.clone());
     let mock_res = state.rest_routes.read().unwrap().get(&route_key).cloned();
 

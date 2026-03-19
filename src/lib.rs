@@ -1,6 +1,5 @@
-
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict};
 
 use arrow::pyarrow::ToPyArrow; 
 
@@ -30,7 +29,7 @@ pub enum WsAdapter {
 
 #[pyclass]
 pub struct OsintEngine {
-    inner: engine::Engine,
+    engine: engine::Engine,
 }
 
 #[pymethods]
@@ -40,17 +39,16 @@ impl OsintEngine {
     #[pyo3(signature = (worker_threads=2))]
     fn new(worker_threads: usize) -> Self {
         Self {
-            inner: engine::Engine::new(worker_threads),
+            engine: engine::Engine::new(worker_threads),
         }
     }
 
-
     fn start(&self) {
-        self.inner.start();
+        self.engine.start();
     }
 
     fn stop(&self) {
-        self.inner.stop();
+        self.engine.stop();
     }
 
 
@@ -61,7 +59,7 @@ impl OsintEngine {
             "Registered REST source '{}' at {} ({}s interval) using {:?}", 
             name, url, poll_interval_sec, adapter
         );
-        self.inner.add_rest_source(name.to_string(), url.to_string(), poll_interval_sec, adapter);
+        self.engine.add_rest_source(name.to_string(), url.to_string(), poll_interval_sec, adapter);
     }
 
 
@@ -69,14 +67,14 @@ impl OsintEngine {
     fn add_ws_source(&self, name: &str, url: &str, adapter: WsAdapter) {
 
         tracing::info!("Registered WS source '{}' at {} using {:?}", name, url, adapter);
-        self.inner.add_ws_source(name.to_string(), url.to_string(), adapter);
+        self.engine.add_ws_source(name.to_string(), url.to_string(), adapter);
     }
 
 
     fn poll<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
 
         // Fetch the Rust Arrow RecordBatches without the GIL
-        let raw_batches = py.detach(|| {self.inner.poll_data()});
+        let raw_batches = py.detach(|| {self.engine.poll_data()});
 
         // Acquire the GIL and export to Python
         let dict = PyDict::new(py);
@@ -84,7 +82,7 @@ impl OsintEngine {
             let pyarrow_obj = batch.to_pyarrow(py)?; 
             dict.set_item(name, pyarrow_obj)?;
         }
-        
+
         Ok(dict)
     }
 }
@@ -92,6 +90,7 @@ impl OsintEngine {
 
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
+
     _ = pyo3_log::try_init();  
     
     m.add_class::<OsintEngine>()?;
