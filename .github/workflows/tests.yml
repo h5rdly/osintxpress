@@ -43,7 +43,7 @@ jobs:
           pip install target/wheels/*.whl
 
       - name: Run tests
-        run: python tests/test_run.py
+        run: python -m unittest discover tests
 
   # Alpine Linux (Musl) 
   test-alpine:
@@ -68,7 +68,7 @@ jobs:
           pip install target/wheels/*.whl
 
       - name: Run tests
-        run: python tests/test_run.py
+        run: python -m unittest discover tests
 
   # FreeBSD 
   # waiting for py313-polars, as there is no official wheel
@@ -89,4 +89,4 @@ jobs:
   #           maturin build --release
   #           pip install target/wheels/*.whl
   #           # python src/mock_server.py
-  #           python tests/test_run.py
+  #           python -m unittest discover tests
