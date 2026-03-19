@@ -12,7 +12,11 @@ def _load_module(module_name: str, path: str):
 def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path: str = None):
 
     _dev_path_linux = f'target/release/lib{_rust_lib_name}.so'
-    module_dev_path = module_dev_path or _dev_path_linux
+    _dev_path_windows = f'target/release/lib{_rust_lib_name}.dll'
+    _dev_path_mac = f'target/release/lib{_rust_lib_name}.dylib'
+    dev_path = _dev_path_windows if os.name == 'nt' else _dev_path_linux if os.name == 'posix' else _dev_path_mac
+
+    module_dev_path = module_dev_path or dev_path
 
     rust_lib = None
     # Wheel load
