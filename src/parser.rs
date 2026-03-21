@@ -10,13 +10,13 @@ use crate::SourceAdapter;
 
 
 pub trait SourceParser: Send + Sync {
-    fn parse(&self, payloads: &[String]) -> RecordBatch;
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String>;
 }
 
 
 pub struct AisStreamParser;
 impl SourceParser for AisStreamParser {
-    fn parse(&self, payloads: &[String]) -> RecordBatch {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut mmsi_builder = Int64Builder::with_capacity(payloads.len());
         let mut speed_builder = Float64Builder::with_capacity(payloads.len());
 
@@ -37,14 +37,15 @@ impl SourceParser for AisStreamParser {
             Field::new("speed", DataType::Float64, false),
         ]));
 
-        RecordBatch::try_new(schema, vec![mmsi_array, speed_array]).expect("Failed to build AIS RecordBatch")
+        RecordBatch::try_new(schema, vec![mmsi_array, speed_array])
+            .map_err(|e| format!("Failed to build AIS RecordBatch: {}", e))
     }
 }
 
 
 pub struct AcledParser;
 impl SourceParser for AcledParser {
-    fn parse(&self, payloads: &[String]) -> RecordBatch {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut id_builder = StringBuilder::new();
 
         for payload in payloads {
@@ -62,14 +63,14 @@ impl SourceParser for AcledParser {
             Field::new("event_id_cnty", DataType::Utf8, true),
         ]));
 
-        RecordBatch::try_new(schema, vec![id_array]).expect("Failed to build ACLED batch")
+        RecordBatch::try_new(schema, vec![id_array]).map_err(|e| format!("Failed to build ACLED batch: {}", e))
     }
 }
 
 
 pub struct OpenSkyParser;
 impl SourceParser for OpenSkyParser {
-    fn parse(&self, payloads: &[String]) -> RecordBatch {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut icao24_builder = StringBuilder::new();
         let mut callsign_builder = StringBuilder::new();
         let mut origin_country_builder = StringBuilder::new();
@@ -114,14 +115,14 @@ impl SourceParser for OpenSkyParser {
             Arc::new(last_contact_builder.finish()),
             Arc::new(longitude_builder.finish()),
             Arc::new(latitude_builder.finish()),
-        ]).expect("Failed to build OpenSky batch")
+        ]).map_err(|e| format!("Failed to build OpenSky batch: {}", e))
     }
 }
 
 
 pub struct GdeltParser;
 impl SourceParser for GdeltParser {
-    fn parse(&self, payloads: &[String]) -> RecordBatch {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut name_builder = StringBuilder::new();
         let mut url_builder = StringBuilder::new();
         let mut longitude_builder = Float64Builder::new();
@@ -163,14 +164,14 @@ impl SourceParser for GdeltParser {
             Arc::new(url_builder.finish()),
             Arc::new(longitude_builder.finish()),
             Arc::new(latitude_builder.finish()),
-        ]).expect("Failed to build GDELT batch")
+        ]).map_err(|e| format!("Failed to build GDELT batch: {}", e))
     }
 }
 
 
 pub struct RssParser;
 impl SourceParser for RssParser {
-    fn parse(&self, payloads: &[String]) -> RecordBatch {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut title_builder = StringBuilder::new();
         let mut link_builder = StringBuilder::new();
 
@@ -235,7 +236,7 @@ impl SourceParser for RssParser {
         RecordBatch::try_new(schema, vec![
             Arc::new(title_builder.finish()),
             Arc::new(link_builder.finish()),
-        ]).expect("Failed to build RSS batch")
+        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
     }
 }
 

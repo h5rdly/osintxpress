@@ -11,8 +11,9 @@ use crate::client::HttpClient;
 use crate::parser::SourceParser;
 
 
+#[derive(Clone)]
 pub enum ConnectionType {
-    Rest { interval_sec: u64 },
+    Rest { interval_sec: u64, headers: Option<HashMap<String, String>>,},
     WebSocket,
 }
 
@@ -67,33 +68,49 @@ impl Engine {
             return Ok(());
         }
 
-        let sources_guard = self.sources.lock().unwrap();
-        let source = sources_guard.get(name).ok_or_else(|| format!("Source '{}' not found", name))?;
+        let (s_name, url, conn_type) = {
+            let sources_guard = self.sources.lock().unwrap();
+            let source = sources_guard.get(name).ok_or_else(|| format!("Source '{}' not found", name))?;
+            (source.name.clone(), source.url.clone(), source.conn_type.clone())
+        }; 
 
         let buffer = self.buffer.clone();
-        let s_name = source.name.clone();
-        let url = source.url.clone();
 
-        // Spawn the correct network loop based on ConnectionType
-        let handle = match source.conn_type {
-            ConnectionType::Rest { interval_sec } => {
+        let handle = match conn_type {
+            ConnectionType::Rest { interval_sec, headers } => {
                 let client = self.http_client.clone();
+                
                 self.rt.spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_sec));
+                    let mut consecutive_errors = 0; // HARDENING: Track failures
+                    
                     loop {
                         interval.tick().await; 
                         tracing::debug!("Fetching from {}...", s_name);
-                        match client.get(&url).await {
+                        
+                        match client.get(&url, headers.clone()).await {
                             Ok(bytes) => {
+                                consecutive_errors = 0; // Reset on success!
                                 if let Ok(text) = String::from_utf8(bytes) {
                                     buffer.lock().unwrap().entry(s_name.clone()).or_insert_with(Vec::new).push(text);
                                 }
                             }
-                            Err(e) => tracing::error!("Failed to fetch {}: {}", s_name, e),
+                            Err(e) => {
+                                consecutive_errors += 1;
+                                tracing::error!("Failed to fetch {} (Strike {}): {}", s_name, consecutive_errors, e);
+                                
+                                // HARDENING: The Circuit Breaker
+                                if consecutive_errors >= 5 {
+                                    tracing::warn!("Circuit breaker tripped for {}. Sleeping for 5 minutes.", s_name);
+                                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                                    consecutive_errors = 0; // Reset after the cooldown period
+                                }
+                            }
                         }
                     }
                 })
             },
+
             ConnectionType::WebSocket => {
                 self.rt.spawn(async move {
                     tracing::debug!("Connecting WS to {}...", url);
@@ -156,9 +173,14 @@ impl Engine {
         
         for (name, payloads) in raw_data {
             if let Some(source) = sources.get(&name) {
-                // Dynamic dispatch
-                let batch = source.parser.parse(&payloads);
-                parsed_data.insert(name, batch);
+                match source.parser.parse(&payloads) {
+                    Ok(batch) => {
+                        parsed_data.insert(name, batch);
+                    }
+                    Err(e) => {
+                        tracing::error!("Data parsing failed for source '{}': {}", name, e);
+                    }
+                }
             }
         }
 

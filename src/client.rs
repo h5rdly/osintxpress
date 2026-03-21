@@ -1,16 +1,16 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, str::FromStr, time::Duration};
+use std::collections::HashMap;
 
-use wreq::Client;
+use wreq::{Client, header::{HeaderName, HeaderValue}};
 use wreq_util::Emulation;
 
 
 pub trait HttpClient: Send + Sync {
-    fn get<'a>(
-        &'a self, 
-        url: &'a str,
+    fn get<'a>(&'a self, url: &'a str, headers: Option<HashMap<String, String>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send + 'a>>;
 }
 
+const NETWORK_TIMEOUT: u64 = 15;
 
 pub struct WreqClient {
     client: Client,
@@ -19,8 +19,8 @@ pub struct WreqClient {
 
 impl WreqClient {
     pub fn new() -> Self {
-        let client = Client::builder().emulation(Emulation::Safari17_5).build()
-            .expect("Failed to build impersonating wreq client");
+        let client = Client::builder().emulation(Emulation::Safari17_5).timeout(Duration::from_secs(NETWORK_TIMEOUT))
+        .build().expect("Failed to build impersonating wreq client");
         Self { client }
     }
 }
@@ -28,11 +28,20 @@ impl WreqClient {
 
 impl HttpClient for WreqClient {
 
-    fn get<'a>(&'a self, url: &'a str,
+    fn get<'a>(&'a self, url: &'a str, headers: Option<HashMap<String, String>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send + 'a>> {
-        
+
         Box::pin(async move {
-            let resp = self.client.get(url).send().await.map_err(|e| e.to_string())?;
+            let mut req = self.client.get(url);
+            if let Some(custom_headers) = headers {
+                for (k, v) in custom_headers {
+                    if let (Ok(name), Ok(val)) = (HeaderName::from_str(&k), HeaderValue::from_str(&v)) {
+                        req = req.header(name, val);
+                    }
+                }
+            }
+            
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             
             if resp.status().is_success() {
                 let bytes = resp.bytes().await.map_err(|e| e.to_string())?;

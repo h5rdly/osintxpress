@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -74,19 +75,18 @@ impl OsintEngine {
         self.engine.stop_all();
     }
 
-    #[pyo3(signature = (name, url, source_type, adapter, poll_interval_sec=60))]
-    fn add_source(&self, name: &str, url: Option<&str>, source_type: &str, adapter: SourceAdapter, poll_interval_sec: u64
+    #[pyo3(signature = (name, source_type, adapter, url=None, poll_interval_sec=60, headers=None))]
+    fn add_source(&self, name: &str, source_type: &str, adapter: SourceAdapter, url: Option<&str>, 
+        poll_interval_sec: u64, headers: Option<HashMap<String, String>>
     ) -> PyResult<()> {
         
         let url = url.unwrap_or_else(|| adapter.default_url());
+
         let conn_type = match source_type.to_lowercase().as_str() {
-            "ws" | "websocket" => {
-                tracing::info!("Registered WS source '{}' at {} using {:?}", name, url, adapter);
-                ConnectionType::WebSocket
-            },
+            "ws" | "websocket" => ConnectionType::WebSocket,
             "rest" | "http" => {
                 tracing::info!("Registered REST source '{}' at {} ({}s interval) using {:?}", name, url, poll_interval_sec, adapter);
-                ConnectionType::Rest { interval_sec: poll_interval_sec }
+                ConnectionType::Rest { interval_sec: poll_interval_sec, headers }
             },
             _ => {
                 return Err(pyo3::exceptions::PyValueError::new_err(
