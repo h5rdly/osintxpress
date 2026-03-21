@@ -33,7 +33,7 @@ jobs:
             target: aarch64
             manylinux: manylinux_2_28
             qemu: true
-            before_script: dnf install -y clang clang-devel cmake perl-core
+            before_script: apt-get update -y && apt-get install -y clang cmake
 
           - name: MacOS Universal
             os: macos-latest
