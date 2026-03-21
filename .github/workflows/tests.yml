@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install Alpine build deps
-        run: apk add --no-cache clang clang-dev make cmake musl-dev cargo git patchelf
+        run: apk add --no-cache clang clang-dev gcc g++ make cmake musl-dev cargo git patchelf
 
       - name: Install dependencies
         run: pip install maturin polars
