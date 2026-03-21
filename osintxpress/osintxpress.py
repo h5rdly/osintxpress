@@ -45,7 +45,6 @@ def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path:
 
     raise ImportError(f'Could not find Rust binary. Tried local dir and {dev_path}')
 
-
 _rust_lib = _load_rust_pip_or_dev()
 globals().update({k: v for k, v in vars(_rust_lib).items() if not k.startswith('__')})
 
