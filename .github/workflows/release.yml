@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    name: Build wheels (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: Linux x86
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: manylinux_2_28
+            before_script: dnf install -y clang clang-devel cmake perl-core
+
+          - name: Musl x86
+            os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            before_script: apk add --no-cache clang clang-dev gcc g++ make cmake musl-dev
+
+          - name: Linux ARM64
+            os: ubuntu-latest
+            target: aarch64
+            manylinux: manylinux_2_28
+            qemu: true
+            before_script: dnf install -y clang clang-devel cmake perl-core
+
+          - name: MacOS Universal
+            os: macos-latest
+            target: universal2-apple-darwin
+
+          - name: Windows
+            os: windows-latest
+            target: x64
+
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          # Inject our C++ toolchains into the Linux docker containers!
+          before-script-linux: ${{ matrix.before_script }}
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+      
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.name }}
+          path: dist
+
+  # build_wheels_freebsd:
+  #   name: Build FreeBSD wheels
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - name: Build in FreeBSD VM
+  #       uses: vmactions/freebsd-vm@v1
+  #       with:
+  #         usesh: true
+  #         prepare: pkg install -y rust python313 git cmake llvm
+          
+  #         run: |
+  #           python3.13 -m venv venv
+  #           . venv/bin/activate
+  #           pip install maturin
+  #           maturin build --release --out dist --find-interpreter
+            
+  #     - name: Upload FreeBSD wheels
+  #       uses: actions/upload-artifact@v6
+  #       with:
+  #         name: wheels-freebsd
+  #         path: dist
+
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdist
+          path: dist
+
+  publish:
+    name: Publish to PyPI + GitHub Release
+    needs: [build_wheels, build_wheels_freebsd, build_sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write      
+      id-token: write      
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: sdist
+          path: dist
+
+      # Explicit downloads - FreeBSD wheels not allowed on PyPI 
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-Linux x86
+          path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-Musl x86
+          path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-Linux ARM64
+          path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-MacOS Universal
+          path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-Windows
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      # - uses: actions/download-artifact@v7
+      #   with:
+      #     name: wheels-freebsd
+      #     path: dist
+
+      # GitHub Release
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/*
+          generate_release_notes: true
