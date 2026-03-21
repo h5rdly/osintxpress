@@ -107,7 +107,7 @@ jobs:
 
   publish:
     name: Publish to PyPI + GitHub Release
-    needs: [build_wheels, build_wheels_freebsd, build_sdist]
+    needs: [build_wheels, build_sdist] # build_wheels_freebsd
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
