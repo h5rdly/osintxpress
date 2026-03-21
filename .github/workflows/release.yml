@@ -33,8 +33,8 @@ jobs:
             target: aarch64
             manylinux: manylinux_2_28
             qemu: true
-            before_script: apt-get update -y && apt-get install -y clang cmake
-
+            before_script: apt-get update -y && apt-get install -y clang cmake gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+         
           - name: MacOS Universal
             os: macos-latest
             target: universal2-apple-darwin
