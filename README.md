@@ -36,7 +36,7 @@ def update_dashboard():
     
 ```
 
-Run `panel serve demo.py`, then open [localhost](http://localhost:5006/demo).
+Run `panel serve demo.py`, then open http://localhost:5006/demo
 
  <img width="2281" height="1033" alt="floights" src="https://github.com/user-attachments/assets/36df86f2-30e7-4063-946c-d39fe296cf9b" />
 
