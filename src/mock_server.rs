@@ -106,11 +106,13 @@ impl MockServer {
         *self.state.hit_counts.read().unwrap().get(path).unwrap_or(&0)
     }
 
+    #[getter]
     fn http_url(&self) -> String {
         let port = self.bound_port.lock().unwrap().expect("Server not started");
         format!("http://{}:{}", self.host, port)
     }
 
+    #[getter]
     fn ws_url(&self) -> String {
         let port = self.bound_port.lock().unwrap().expect("Server not started");
         format!("ws://{}:{}", self.host, port)

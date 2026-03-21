@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use pyo3::prelude::*;
-use pyo3::types::{PyDict};
+use pyo3::types::PyDict;
 
 use arrow::pyarrow::ToPyArrow; 
 
@@ -8,29 +10,41 @@ mod mock_server;
 mod client;
 mod parser;
 
+use engine::{Engine, ConnectionType};
+
 
 #[allow(non_camel_case_types)]
 #[pyclass(eq, eq_int, from_py_object)]
 #[derive(Clone, PartialEq, Debug)]
-pub enum RestAdapter {
+pub enum SourceAdapter {
+    // REST sources
     ACLED,
     GDELT_GEOJSON,
     OPENSKY,
-    RSS,
+    REUTERS,
+
+    // WebSocket sources
+    AIS_STREAM,
 }
 
-#[allow(non_camel_case_types)]
-#[pyclass(eq, eq_int, from_py_object)]
-#[derive(Clone, PartialEq, Debug)]
-pub enum WsAdapter {
-    AIS_STREAM,
+impl SourceAdapter {
+    pub fn default_url(&self) -> &'static str {
+        match self {
+            SourceAdapter::ACLED => "https://acleddata.com/api/acled/read",
+            SourceAdapter::OPENSKY => "https://opensky-network.org/api/states/all",
+            SourceAdapter::GDELT_GEOJSON => "https://api.gdeltproject.org/api/v2/geo/geo?format=geojson",
+            SourceAdapter::REUTERS => "https://www.reutersagency.com/feed/",
+            SourceAdapter::AIS_STREAM => "wss://stream.aisstream.io/v0/stream",
+        }
+    }
 }
 
 
 #[pyclass]
 pub struct OsintEngine {
-    engine: engine::Engine,
+    engine: Engine,
 }
+
 
 #[pymethods]
 impl OsintEngine {
@@ -38,45 +52,60 @@ impl OsintEngine {
     #[new]
     #[pyo3(signature = (worker_threads=2))]
     fn new(worker_threads: usize) -> Self {
+        let http_client = Arc::new(client::WreqClient::new());
         Self {
-            engine: engine::Engine::new(worker_threads),
+            engine: Engine::new(worker_threads, http_client),
         }
     }
 
-    fn start(&self) {
-        self.engine.start();
+    fn start_source(&self, name: &str) -> PyResult<()> {
+        self.engine.start_source(name).map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
     }
 
-    fn stop(&self) {
-        self.engine.stop();
+    fn stop_source(&self, name: &str) {
+        self.engine.stop_source(name);
     }
 
+    fn start_all(&self) {
+        self.engine.start_all();
+    }
 
-    #[pyo3(signature = (name, url, poll_interval_sec, adapter))]
-    fn add_rest_source(&self, name: &str, url: &str, poll_interval_sec: u64, adapter: RestAdapter) {
+    fn stop_all(&self) {
+        self.engine.stop_all();
+    }
+
+    #[pyo3(signature = (name, url, source_type, adapter, poll_interval_sec=60))]
+    fn add_source(&self, name: &str, url: Option<&str>, source_type: &str, adapter: SourceAdapter, poll_interval_sec: u64
+    ) -> PyResult<()> {
         
-        tracing::info!(
-            "Registered REST source '{}' at {} ({}s interval) using {:?}", 
-            name, url, poll_interval_sec, adapter
-        );
-        self.engine.add_rest_source(name.to_string(), url.to_string(), poll_interval_sec, adapter);
-    }
+        let url = url.unwrap_or_else(|| adapter.default_url());
+        let conn_type = match source_type.to_lowercase().as_str() {
+            "ws" | "websocket" => {
+                tracing::info!("Registered WS source '{}' at {} using {:?}", name, url, adapter);
+                ConnectionType::WebSocket
+            },
+            "rest" | "http" => {
+                tracing::info!("Registered REST source '{}' at {} ({}s interval) using {:?}", name, url, poll_interval_sec, adapter);
+                ConnectionType::Rest { interval_sec: poll_interval_sec }
+            },
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "source_type must be either 'rest' or 'ws'"
+                ));
+            }
+        };
+        
+        let parser = parser::get_parser(&adapter); 
+        self.engine.add_source(name.to_string(), url.to_string(), conn_type, parser);
 
-
-    #[pyo3(signature = (name, url, adapter))]
-    fn add_ws_source(&self, name: &str, url: &str, adapter: WsAdapter) {
-
-        tracing::info!("Registered WS source '{}' at {} using {:?}", name, url, adapter);
-        self.engine.add_ws_source(name.to_string(), url.to_string(), adapter);
+        Ok(())
     }
 
 
     fn poll<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
 
-        // Fetch the Rust Arrow RecordBatches without the GIL
-        let raw_batches = py.detach(|| {self.engine.poll_data()});
+        let raw_batches = py.detach(|| self.engine.poll_data());
 
-        // Acquire the GIL and export to Python
         let dict = PyDict::new(py);
         for (name, batch) in raw_batches {
             let pyarrow_obj = batch.to_pyarrow(py)?; 
@@ -91,13 +120,10 @@ impl OsintEngine {
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
-    _ = pyo3_log::try_init();  
-    
+    let _ = tracing_subscriber::fmt::try_init();
     m.add_class::<OsintEngine>()?;
     m.add_class::<mock_server::MockServer>()?; 
-    
-    m.add_class::<RestAdapter>()?;
-    m.add_class::<WsAdapter>()?;
+    m.add_class::<SourceAdapter>()?;
 
     Ok(())
 }

@@ -9,10 +9,11 @@ description = "High-throughput OSINT ingestion engine for Python"
 readme = "README.md"
 requires-python = ">=3.12"
 
-dependencies = [
-    "pyarrow >= 23.0.1",
-    "polars >= 1.39.2"
-]
+dependencies = ["pyarrow >= 23.0.1"]
+
+[dependency-groups]
+test = ["polars >= 1.39.2"]
+
 
 [project.urls]
 
