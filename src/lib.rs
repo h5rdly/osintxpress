@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use arrow::pyarrow::ToPyArrow; 
+// use arrow::pyarrow::ToPyArrow; 
+use pyo3_arrow::PyRecordBatch; 
+
 
 mod engine;
 mod mock_server; 
@@ -108,8 +110,7 @@ impl OsintEngine {
 
         let dict = PyDict::new(py);
         for (name, batch) in raw_batches {
-            let pyarrow_obj = batch.to_pyarrow(py)?; 
-            dict.set_item(name, pyarrow_obj)?;
+            dict.set_item(name, PyRecordBatch::new(batch).to_arro3(py)?)?;
         }
 
         Ok(dict)

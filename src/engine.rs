@@ -129,16 +129,15 @@ impl Engine {
                     loop {
                         tracing::debug!("Connecting WS to {}...", url);
                         
-                        // 1. Upgrade the HTTP request to a WebSocket connection
                         match ws_client.websocket(&url).send().await {
                             Ok(response) => {
-                                // 2. Extract the actual WebSocket stream
+                                // Extract the WebSocket stream
                                 match response.into_websocket().await {
                                     Ok(mut ws_stream) => {
                                         tracing::info!("Connected to WS: {}", s_name);
                                         backoff_sec = 1; 
                                         
-                                        // 3. Immediately send the subscription payload!
+                                        // Subscription payload - if exists
                                         if let Some(msg) = &init_message {
                                             if let Err(e) = ws_stream.send(wreq::ws::message::Message::text(msg.clone())).await {
                                                 tracing::error!("Failed to send init_message to {}: {}", s_name, e);
@@ -147,7 +146,6 @@ impl Engine {
                                             }
                                         }
                                         
-                                        // 4. Poll the stream
                                         while let Some(Ok(msg)) = ws_stream.next().await {
                                             if let wreq::ws::message::Message::Text(text) = msg {
                                                 let mut guard = buffer.lock().unwrap();
