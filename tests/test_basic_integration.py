@@ -62,10 +62,16 @@ class TestOsintEngineIntegration(unittest.TestCase):
         cls.mock_server.add_ws_route(
             path='/ws/aisstream',
             messages=[json.dumps({
+                'MetaData': {
+                    'MMSI': 211123456,
+                    'ShipName': 'Test Ship',
+                    'latitude': 32.0,
+                    'longitude': 34.8
+                },
                 'Message': {
                     'PositionReport': {
-                        'UserID': 211123456, 
-                        'Sog': 12.5
+                        'Sog': 12.5,
+                        'TrueHeading': 90.0
                     }
                 }
             })]

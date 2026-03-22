@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use arrow::array::{Float64Builder, Int32Builder, Int64Builder, StringBuilder, RecordBatch};
+use arrow::datatypes::{DataType, Field, Schema};
+
 use serde_json::Value;
+
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use arrow::array::{Float64Builder, Int64Builder, StringBuilder, RecordBatch};
-use arrow::datatypes::{DataType, Field, Schema};
 
 use crate::SourceAdapter;
 
@@ -17,28 +19,49 @@ pub trait SourceParser: Send + Sync {
 pub struct AisStreamParser;
 impl SourceParser for AisStreamParser {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut mmsi_builder = Int64Builder::with_capacity(payloads.len());
-        let mut speed_builder = Float64Builder::with_capacity(payloads.len());
+        let mut mmsi_builder = Int64Builder::new();
+        let mut name_builder = StringBuilder::new();
+        let mut lat_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut speed_builder = Float64Builder::new();
+        let mut heading_builder = Float64Builder::new();
 
         for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(report) = val.get("Message").and_then(|m| m.get("PositionReport")) {
-                    mmsi_builder.append_value(report.get("UserID").and_then(|v| v.as_i64()).unwrap_or(0));
-                    speed_builder.append_value(report.get("Sog").and_then(|v| v.as_f64()).unwrap_or(0.0));
-                }
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+                // AisStream puts the identity and location fields in "MetaData"
+                let meta = json.get("MetaData");
+                
+                mmsi_builder.append_option(meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()));
+                name_builder.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
+                lat_builder.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
+                lon_builder.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
+
+                let report = json.get("Message").and_then(|m| m.get("PositionReport"));
+                speed_builder.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
+                heading_builder.append_option(report.and_then(|r| r.get("TrueHeading")).and_then(|v| v.as_f64()));
             }
         }
 
-        let mmsi_array = Arc::new(mmsi_builder.finish());
-        let speed_array = Arc::new(speed_builder.finish());
-
         let schema = Arc::new(Schema::new(vec![
-            Field::new("mmsi", DataType::Int64, false),
-            Field::new("speed", DataType::Float64, false),
+            Field::new("mmsi", DataType::Int64, true),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("speed", DataType::Float64, true),
+            Field::new("heading", DataType::Float64, true),
         ]));
 
-        RecordBatch::try_new(schema, vec![mmsi_array, speed_array])
-            .map_err(|e| format!("Failed to build AIS RecordBatch: {}", e))
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(mmsi_builder.finish()),
+                Arc::new(name_builder.finish()),
+                Arc::new(lat_builder.finish()),
+                Arc::new(lon_builder.finish()),
+                Arc::new(speed_builder.finish()),
+                Arc::new(heading_builder.finish()),
+            ],
+        ).map_err(|e| format!("Failed to build AIS RecordBatch: {}", e))
     }
 }
 
@@ -47,23 +70,59 @@ pub struct AcledParser;
 impl SourceParser for AcledParser {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
         let mut id_builder = StringBuilder::new();
+        let mut type_builder = StringBuilder::new();
+        let mut lat_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut fat_builder = Int32Builder::new();
 
         for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(data_array) = val.get("data").and_then(|d| d.as_array()) {
-                    for item in data_array {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                    for item in data {
                         id_builder.append_option(item.get("event_id_cnty").and_then(|v| v.as_str()));
+                        type_builder.append_option(item.get("event_type").and_then(|v| v.as_str()));
+
+                        // ACLED returns coordinates and fatalities as strings
+                        if let Some(lat_str) = item.get("latitude").and_then(|v| v.as_str()) {
+                            lat_builder.append_option(lat_str.parse::<f64>().ok());
+                        } else {
+                            lat_builder.append_null();
+                        }
+
+                        if let Some(lon_str) = item.get("longitude").and_then(|v| v.as_str()) {
+                            lon_builder.append_option(lon_str.parse::<f64>().ok());
+                        } else {
+                            lon_builder.append_null();
+                        }
+
+                        if let Some(fat_str) = item.get("fatalities").and_then(|v| v.as_str()) {
+                            fat_builder.append_option(fat_str.parse::<i32>().ok());
+                        } else {
+                            fat_builder.append_null();
+                        }
                     }
                 }
             }
         }
 
-        let id_array = Arc::new(id_builder.finish());
         let schema = Arc::new(Schema::new(vec![
             Field::new("event_id_cnty", DataType::Utf8, true),
+            Field::new("event_type", DataType::Utf8, true),
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("fatalities", DataType::Int32, true),
         ]));
 
-        RecordBatch::try_new(schema, vec![id_array]).map_err(|e| format!("Failed to build ACLED batch: {}", e))
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_builder.finish()),
+                Arc::new(type_builder.finish()),
+                Arc::new(lat_builder.finish()),
+                Arc::new(lon_builder.finish()),
+                Arc::new(fat_builder.finish()),
+            ],
+        ).map_err(|e| format!("Failed to build ACLED RecordBatch: {}", e))
     }
 }
 

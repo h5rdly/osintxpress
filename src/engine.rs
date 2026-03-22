@@ -75,14 +75,15 @@ impl Engine {
         }; 
 
         let buffer = self.buffer.clone();
+        let max_buffer_size = 50;
 
         let handle = match conn_type {
-            ConnectionType::Rest { interval_sec, headers } => {
+           ConnectionType::Rest { interval_sec, headers } => {
                 let client = self.http_client.clone();
                 
                 self.rt.spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_sec));
-                    let mut consecutive_errors = 0; // HARDENING: Track failures
+                    let mut consecutive_errors = 0; 
                     
                     loop {
                         interval.tick().await; 
@@ -90,20 +91,28 @@ impl Engine {
                         
                         match client.get(&url, headers.clone()).await {
                             Ok(bytes) => {
-                                consecutive_errors = 0; // Reset on success!
+                                consecutive_errors = 0; 
                                 if let Ok(text) = String::from_utf8(bytes) {
-                                    buffer.lock().unwrap().entry(s_name.clone()).or_insert_with(Vec::new).push(text);
+                                    let mut guard = buffer.lock().unwrap();
+                                    let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
+                                    
+                                    queue.push(text);
+                                                                    
+                                    if queue.len() > max_buffer_size {
+                                        let excess = queue.len() - max_buffer_size;
+                                        queue.drain(0..excess); 
+                                        tracing::warn!("Buffer capped for {}. Python polling is too slow!", s_name);
+                                    }
                                 }
                             }
                             Err(e) => {
                                 consecutive_errors += 1;
                                 tracing::error!("Failed to fetch {} (Strike {}): {}", s_name, consecutive_errors, e);
                                 
-                                // HARDENING: The Circuit Breaker
                                 if consecutive_errors >= 5 {
                                     tracing::warn!("Circuit breaker tripped for {}. Sleeping for 5 minutes.", s_name);
                                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                                    consecutive_errors = 0; // Reset after the cooldown period
+                                    consecutive_errors = 0; 
                                 }
                             }
                         }
@@ -113,18 +122,40 @@ impl Engine {
 
             ConnectionType::WebSocket => {
                 self.rt.spawn(async move {
-                    tracing::debug!("Connecting WS to {}...", url);
-                    match tokio_tungstenite::connect_async(&url).await {
-                        Ok((mut ws_stream, _)) => {
-                            tracing::info!("Connected to WS: {}", s_name);
-                            while let Some(msg) = ws_stream.next().await {
-                                if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
-                                    buffer.lock().unwrap().entry(s_name.clone()).or_insert_with(Vec::new).push(text.to_string());
+                    let mut backoff_sec = 1; 
+                    
+                    loop {
+                        tracing::debug!("Connecting WS to {}...", url);
+                        
+                        match tokio_tungstenite::connect_async(&url).await {
+                            Ok((mut ws_stream, _)) => {
+                                tracing::info!("Connected to WS: {}", s_name);
+                                backoff_sec = 1; 
+                                
+                                while let Some(msg) = ws_stream.next().await {
+                                    if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
+                                        let mut guard = buffer.lock().unwrap();
+                                        let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
+                                        
+                                        queue.push(text.to_string());
+                                        
+                                        if queue.len() > max_buffer_size {
+                                            let excess = queue.len() - max_buffer_size;
+                                            queue.drain(0..excess);
+                                        }
+                                    }
+                                }
+                                tracing::warn!("WS stream closed for {}. Attempting reconnect...", s_name);
+                            }
+                            Err(e) => {
+                                tracing::error!("WS connection failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
+                                tokio::time::sleep(std::time::Duration::from_secs(backoff_sec)).await;
+                                
+                                if backoff_sec < 60 {
+                                    backoff_sec *= 2; 
                                 }
                             }
-                            tracing::warn!("WS stream closed for {}", s_name);
                         }
-                        Err(e) => tracing::error!("WS connection failed for {}: {}", s_name, e),
                     }
                 })
             }
