@@ -13,7 +13,13 @@ dependencies = ["pyarrow >= 23.0.1"]
 
 [dependency-groups]
 test = ["polars >= 1.39.2"]
-
+dashboard = [
+    "panel",
+    "lonboard",
+    "polars",
+    "geoarrow-rust-core",
+    "perspective-python"
+]
 
 [project.urls]
 

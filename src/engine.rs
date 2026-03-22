@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
-use futures_util::StreamExt; 
+use futures_util::{StreamExt}; 
 
 use arrow::record_batch::RecordBatch;
 
@@ -14,7 +14,7 @@ use crate::parser::SourceParser;
 #[derive(Clone)]
 pub enum ConnectionType {
     Rest { interval_sec: u64, headers: Option<HashMap<String, String>>,},
-    WebSocket,
+    WebSocket { init_message: Option<String> }, 
 }
 
 pub struct Source {
@@ -41,7 +41,7 @@ impl Engine {
             .enable_all()
             .build()
             .expect("Failed to initialize Tokio runtime");
-
+        
         Self {
             rt,
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
@@ -120,40 +120,60 @@ impl Engine {
                 })
             },
 
-            ConnectionType::WebSocket => {
+            ConnectionType::WebSocket { init_message } => {
+                let ws_client = wreq::Client::new();
+                
                 self.rt.spawn(async move {
                     let mut backoff_sec = 1; 
                     
                     loop {
                         tracing::debug!("Connecting WS to {}...", url);
                         
-                        match tokio_tungstenite::connect_async(&url).await {
-                            Ok((mut ws_stream, _)) => {
-                                tracing::info!("Connected to WS: {}", s_name);
-                                backoff_sec = 1; 
-                                
-                                while let Some(msg) = ws_stream.next().await {
-                                    if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
-                                        let mut guard = buffer.lock().unwrap();
-                                        let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
+                        // 1. Upgrade the HTTP request to a WebSocket connection
+                        match ws_client.websocket(&url).send().await {
+                            Ok(response) => {
+                                // 2. Extract the actual WebSocket stream
+                                match response.into_websocket().await {
+                                    Ok(mut ws_stream) => {
+                                        tracing::info!("Connected to WS: {}", s_name);
+                                        backoff_sec = 1; 
                                         
-                                        queue.push(text.to_string());
-                                        
-                                        if queue.len() > max_buffer_size {
-                                            let excess = queue.len() - max_buffer_size;
-                                            queue.drain(0..excess);
+                                        // 3. Immediately send the subscription payload!
+                                        if let Some(msg) = &init_message {
+                                            if let Err(e) = ws_stream.send(wreq::ws::message::Message::text(msg.clone())).await {
+                                                tracing::error!("Failed to send init_message to {}: {}", s_name, e);
+                                            } else {
+                                                tracing::info!("Sent subscription payload to {}", s_name);
+                                            }
                                         }
+                                        
+                                        // 4. Poll the stream
+                                        while let Some(Ok(msg)) = ws_stream.next().await {
+                                            if let wreq::ws::message::Message::Text(text) = msg {
+                                                let mut guard = buffer.lock().unwrap();
+                                                let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
+                                                
+                                                queue.push(text.to_string());
+                                                
+                                                if queue.len() > max_buffer_size {
+                                                    let excess = queue.len() - max_buffer_size;
+                                                    queue.drain(0..excess);
+                                                }
+                                            }
+                                        }
+                                        tracing::warn!("WS stream closed for {}. Attempting reconnect...", s_name);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("WS Upgrade failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
+                                        tokio::time::sleep(std::time::Duration::from_secs(backoff_sec)).await;
+                                        if backoff_sec < 60 { backoff_sec *= 2; }
                                     }
                                 }
-                                tracing::warn!("WS stream closed for {}. Attempting reconnect...", s_name);
                             }
                             Err(e) => {
-                                tracing::error!("WS connection failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
+                                tracing::error!("WS Connection failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
                                 tokio::time::sleep(std::time::Duration::from_secs(backoff_sec)).await;
-                                
-                                if backoff_sec < 60 {
-                                    backoff_sec *= 2; 
-                                }
+                                if backoff_sec < 60 { backoff_sec *= 2; }
                             }
                         }
                     }
@@ -177,7 +197,6 @@ impl Engine {
 
 
     pub fn start_all(&self) {
-
         let names: Vec<String> = self.sources.lock().unwrap().keys().cloned().collect();
         for name in names {
             let _ = self.start_source(&name);
@@ -194,7 +213,6 @@ impl Engine {
 
 
     pub fn poll_data(&self) -> HashMap<String, RecordBatch> {
-
         let mut buffer_guard = self.buffer.lock().unwrap();
         let raw_data = buffer_guard.clone();
         buffer_guard.clear(); 
@@ -219,7 +237,6 @@ impl Engine {
     }
 
 }
-
 
 impl Drop for Engine {
     fn drop(&mut self) {

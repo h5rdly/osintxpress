@@ -75,15 +75,15 @@ impl OsintEngine {
         self.engine.stop_all();
     }
 
-    #[pyo3(signature = (name, source_type, adapter, url=None, poll_interval_sec=60, headers=None))]
+    #[pyo3(signature = (name, source_type, adapter, url=None, poll_interval_sec=60, headers=None, init_message=None))]
     fn add_source(&self, name: &str, source_type: &str, adapter: SourceAdapter, url: Option<&str>, 
-        poll_interval_sec: u64, headers: Option<HashMap<String, String>>
+        poll_interval_sec: u64, headers: Option<HashMap<String, String>>, init_message: Option<String>,
     ) -> PyResult<()> {
         
         let url = url.unwrap_or_else(|| adapter.default_url());
 
         let conn_type = match source_type.to_lowercase().as_str() {
-            "ws" | "websocket" => ConnectionType::WebSocket,
+            "ws" | "websocket" => ConnectionType::WebSocket {init_message},
             "rest" | "http" => {
                 tracing::info!("Registered REST source '{}' at {} ({}s interval) using {:?}", name, url, poll_interval_sec, adapter);
                 ConnectionType::Rest { interval_sec: poll_interval_sec, headers }
@@ -121,6 +121,7 @@ impl OsintEngine {
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let _ = tracing_subscriber::fmt::try_init();
+
     m.add_class::<OsintEngine>()?;
     m.add_class::<mock_server::MockServer>()?; 
     m.add_class::<SourceAdapter>()?;

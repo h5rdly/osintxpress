@@ -16,12 +16,11 @@ quick-xml = { version = "0.36.0", features = ["serialize"] }
 arrow = { version = "58.0.0", features = ["pyarrow"] } 
 
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
-tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 
 axum = { version = "0.8.8", features = ["ws"] }
 tower = "0.5.3" 
-wreq = "6.0.0-rc.28"
+wreq = { version = "6.0.0-rc.28", features = ["ws"] }
 wreq-util = "3.0.0-rc.10"
 # deboa = "0.0.9"
 
