@@ -13,7 +13,7 @@ A fast OSINT data fetching library. Returns [Arrow](https://github.com/apache/ar
 - Wheels for Win, Mac, Linux, Alpine. FreeBSD wheels can be gladly added once updated arrow / polars packages are available.
 
 ## Demo
-Interactive flight map using [Panel](https://github.com/holoviz/panel) and [lonboard](https://github.com/developmentseed/lonboard). Fetching related code from the [demo](https://github.com/h5rdly/osintxpress/blob/main/demo.py) -
+Interactive flight map using [Panel](https://github.com/holoviz/panel) and [lonboard](https://github.com/developmentseed/lonboard). osintxpress related code from the [demo](https://github.com/h5rdly/osintxpress/blob/main/demo.py) -
 
 ```python
 from osintxpress import OsintEngine, SourceAdapter
