@@ -8,7 +8,7 @@ A fast OSINT data fetching library. Returns [Arrow](https://github.com/apache/ar
 ## Installation
 `pip install osintxpress`
 
-- `pyarrow` is the sole dependency, to accept Arrow arrays on the Python side.
+- [arro3-core](https://github.com/kylebarron/arro3/tree/main/arro3-core) is the sole dependency, to accept Arrow arrays via the [PyCapsule](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html) protocol. `PyArrow` works as well if needed - has more options (such as converting to CSV), but is much bulkier. 
 - `polars` is used in the tests.
 - Wheels for Win, Mac, Linux, Alpine. FreeBSD wheels can be gladly added once updated arrow / polars packages are available.
 
