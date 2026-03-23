@@ -1,17 +1,18 @@
-import json
+import warnings
+warnings.filterwarnings("ignore", message="No CRS exists on data")
 
-import pyarrow as pa, polars as pl, geoarrow.pyarrow as ga, panel as pn
-
+import polars as pl
+import panel as pn
+import arro3.core as ac # <-- Using arro3 natively!
 import lonboard
 from lonboard.basemap import MaplibreBasemap, CartoStyle
+from geoarrow.rust.core import points 
 
 from osintxpress import OsintEngine, SourceAdapter
 
-
 engine = OsintEngine(worker_threads=2)
 engine.add_source(
-    name="flights",
-    source_type='rest',
+    name="flights", # Optional name
     adapter=SourceAdapter.OPENSKY,
     poll_interval_sec=10 
 )
@@ -26,33 +27,41 @@ interactive_map = lonboard.Map(
 
 stats = pn.pane.Markdown("### Awaiting signal...", styles={"color": "#39FF14"})
 
-
 def update_dashboard():
-
     data = engine.poll()
-    if "flights" in data and len(data["flights"]) > 0:
     
+    # 1. No len() check on the raw arro3 batch!
+    if "flights" in data:
+        # 2. Convert to Polars first
         df = pl.from_arrow(data["flights"]).drop_nulls(subset=["longitude", "latitude"])
-        pa_table = df.to_arrow()
         
-        # GeoArrow Extension Column 
-        geometry_col = ga.make_point(pa_table["longitude"], pa_table["latitude"])
-        pa_table = pa_table.append_column("geometry", geometry_col)
-        
-        # Stream the GeoArrow binary to the browser GPU
-        new_layer = lonboard.ScatterplotLayer(
-            table=pa_table,
-            get_fill_color=[57, 255, 20, 200], # Fancy glowy Green
-            get_radius=4000,
-            radius_min_pixels=2
-        )
-        
-        # Overwrite the map layers
-        interactive_map.layers = [new_layer]
-        stats.object = f"### Tracking **{len(df)}** aircraft"
+        # 3. Check len() on the DataFrame
+        if len(df) > 0:
+            # 4. Crush the Polars streams into contiguous Arro3 arrays
+            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
+            
+            # 5. Feed contiguous arrays to geoarrow-rust
+            geometry_col = points([lon_arr, lat_arr])
+            
+            # 6. Append natively to an Arro3 Table
+            table = ac.Table.from_arrow(df).append_column("geometry", geometry_col)
+            
+            # Stream the GeoArrow binary to the browser GPU
+            new_layer = lonboard.ScatterplotLayer(
+                table=table,
+                get_fill_color=[57, 255, 20, 200], # Fancy glowy Green
+                get_radius=4000,
+                radius_min_pixels=2
+            )
+            
+            # Overwrite the map layers
+            interactive_map.layers = [new_layer]
+            stats.object = f"### Tracking **{len(df)}** aircraft"
 
 # Poll every 5 seconds
 pn.state.add_periodic_callback(update_dashboard, period=5000)
+
 
 # Render flights view
 pn.Column(
