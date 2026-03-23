@@ -1,5 +1,5 @@
 import warnings
-warnings.filterwarnings("ignore", message="No CRS exists on data")
+warnings.filterwarnings('ignore', message='No CRS exists on data')
 
 import polars as pl
 import panel as pn
@@ -12,7 +12,7 @@ from osintxpress import OsintEngine, SourceAdapter
 
 engine = OsintEngine(worker_threads=2)
 engine.add_source(
-    name="flights", # Optional name
+    name='flights', # Optional name
     adapter=SourceAdapter.OPENSKY,
     poll_interval_sec=10 
 )
@@ -22,30 +22,30 @@ engine.start_all()
 interactive_map = lonboard.Map(
     layers=[], 
     basemap=MaplibreBasemap(style=CartoStyle.DarkMatter), 
-    view_state={"longitude": 34.7, "latitude": 31.5, "zoom": 5, "pitch": 45}
+    view_state={'longitude': 34.7, 'latitude': 31.5, 'zoom': 5, 'pitch': 45}
 )
 
-stats = pn.pane.Markdown("### Awaiting signal...", styles={"color": "#39FF14"})
+stats = pn.pane.Markdown('### Awaiting signal...', styles={'color': '#39FF14'})
 
 def update_dashboard():
     data = engine.poll()
     
     # 1. No len() check on the raw arro3 batch!
-    if "flights" in data:
+    if 'flights' in data:
         # 2. Convert to Polars first
-        df = pl.from_arrow(data["flights"]).drop_nulls(subset=["longitude", "latitude"])
+        df = pl.from_arrow(data['flights']).drop_nulls(subset=['longitude', 'latitude'])
         
         # 3. Check len() on the DataFrame
         if len(df) > 0:
             # 4. Crush the Polars streams into contiguous Arro3 arrays
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
             
             # 5. Feed contiguous arrays to geoarrow-rust
             geometry_col = points([lon_arr, lat_arr])
             
             # 6. Append natively to an Arro3 Table
-            table = ac.Table.from_arrow(df).append_column("geometry", geometry_col)
+            table = ac.Table.from_arrow(df).append_column('geometry', geometry_col)
             
             # Stream the GeoArrow binary to the browser GPU
             new_layer = lonboard.ScatterplotLayer(
@@ -57,7 +57,7 @@ def update_dashboard():
             
             # Overwrite the map layers
             interactive_map.layers = [new_layer]
-            stats.object = f"### Tracking **{len(df)}** aircraft"
+            stats.object = f'### Tracking **{len(df)}** aircraft'
 
 # Poll every 5 seconds
 pn.state.add_periodic_callback(update_dashboard, period=5000)
@@ -66,6 +66,6 @@ pn.state.add_periodic_callback(update_dashboard, period=5000)
 # Render flights view
 pn.Column(
     stats,
-    pn.pane.IPyWidget(interactive_map, sizing_mode="stretch_both", min_height=700),
-    styles={"background": "#121212", "padding": "20px"}
+    pn.pane.IPyWidget(interactive_map, sizing_mode='stretch_both', min_height=700),
+    styles={'background': '#121212', 'padding': '20px'}
 ).servable()

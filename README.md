@@ -20,7 +20,7 @@ from osintxpress import OsintEngine, SourceAdapter
 
 
 engine = OsintEngine(worker_threads=2)
-engine.add_source(name="flights", source_type='rest', adapter=SourceAdapter.OPENSKY, poll_interval_sec=10 )
+engine.add_source(name="flights", adapter=SourceAdapter.OPENSKY, poll_interval_sec=10)
 engine.start_all()
 
 .
@@ -29,7 +29,7 @@ engine.start_all()
 def update_dashboard():
 
     data = engine.poll()
-    if 'flights' in data and len(data['flights']) > 0:
+    if 'flights' in data:
         df = pl.from_arrow(data['flights']).drop_nulls(subset=['longitude', 'latitude'])
     .
     .
