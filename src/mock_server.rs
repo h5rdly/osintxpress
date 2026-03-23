@@ -69,11 +69,11 @@ impl MockServer {
         }
     }
 
-    #[pyo3(signature = (method, path, status_code=200, json_payload=None, raw_payload=None))]
+    #[pyo3(signature = (path, method="GET", status_code=200, json_payload=None, raw_payload=None))]
     fn add_rest_route(
         &self,
-        method: &str,
         path: &str,
+        method: &str,
         status_code: u16,
         json_payload: Option<&str>,
         raw_payload: Option<&str>,
@@ -96,6 +96,7 @@ impl MockServer {
         );
         tracing::debug!("Mock route added: {} {}", method.to_uppercase(), path);
     }
+
 
     fn add_ws_route(&self, path: &str, messages: Vec<String>) {
         self.state.ws_routes.write().unwrap().insert(path.to_string(), messages);

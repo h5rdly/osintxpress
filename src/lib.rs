@@ -14,33 +14,7 @@ mod client;
 mod parser;
 
 use engine::{Engine, ConnectionType};
-
-
-#[allow(non_camel_case_types)]
-#[pyclass(eq, eq_int, from_py_object)]
-#[derive(Clone, PartialEq, Debug)]
-pub enum SourceAdapter {
-    // REST sources
-    ACLED,
-    GDELT_GEOJSON,
-    OPENSKY,
-    REUTERS,
-
-    // WebSocket sources
-    AIS_STREAM,
-}
-
-impl SourceAdapter {
-    pub fn default_url(&self) -> &'static str {
-        match self {
-            SourceAdapter::ACLED => "https://acleddata.com/api/acled/read",
-            SourceAdapter::OPENSKY => "https://opensky-network.org/api/states/all",
-            SourceAdapter::GDELT_GEOJSON => "https://api.gdeltproject.org/api/v2/geo/geo?format=geojson",
-            SourceAdapter::REUTERS => "https://www.reutersagency.com/feed/",
-            SourceAdapter::AIS_STREAM => "wss://stream.aisstream.io/v0/stream",
-        }
-    }
-}
+use parser::SourceAdapter;
 
 
 #[pyclass]
@@ -77,28 +51,31 @@ impl OsintEngine {
         self.engine.stop_all();
     }
 
-    #[pyo3(signature = (name, source_type, adapter, url=None, poll_interval_sec=60, headers=None, init_message=None))]
-    fn add_source(&self, name: &str, source_type: &str, adapter: SourceAdapter, url: Option<&str>, 
-        poll_interval_sec: u64, headers: Option<HashMap<String, String>>, init_message: Option<String>,
+    #[pyo3(signature = (adapter, name=None, url=None, poll_interval_sec=60, headers=None, init_message=None))]
+    fn add_source(
+        &self,
+        adapter: SourceAdapter,
+        name: Option<&str>, 
+        url: Option<&str>,
+        poll_interval_sec: u64,
+        headers: Option<HashMap<String, String>>,
+        init_message: Option<String>,
     ) -> PyResult<()> {
-        
-        let url = url.unwrap_or_else(|| adapter.default_url());
 
-        let conn_type = match source_type.to_lowercase().as_str() {
-            "ws" | "websocket" => ConnectionType::WebSocket {init_message},
-            "rest" | "http" => {
-                tracing::info!("Registered REST source '{}' at {} ({}s interval) using {:?}", name, url, poll_interval_sec, adapter);
-                ConnectionType::Rest { interval_sec: poll_interval_sec, headers }
-            },
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "source_type must be either 'rest' or 'ws'"
-                ));
-            }
+        let pure_adapter: parser::SourceAdapter = adapter.clone().into();
+
+        let url = url.unwrap_or_else(|| pure_adapter.default_url());
+        let parser = parser::get_parser(&pure_adapter); 
+        let source_name = name.map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{:?}", adapter).to_lowercase());
+
+        let conn_type = if pure_adapter.is_ws() {
+            ConnectionType::WebSocket { init_message }
+        } else {
+            ConnectionType::Rest { interval_sec: poll_interval_sec, headers }
         };
         
-        let parser = parser::get_parser(&adapter); 
-        self.engine.add_source(name.to_string(), url.to_string(), conn_type, parser);
+        self.engine.add_source(source_name, url.to_string(), conn_type, parser);
 
         Ok(())
     }

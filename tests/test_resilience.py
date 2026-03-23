@@ -12,9 +12,7 @@ class TestOsintEngineResilience(unittest.TestCase):
         
         #  Missing fields, wrong types, malformed JSON
         cls.mock_server.add_rest_route(
-            method='GET',
             path='/api/poison',
-            status_code=200,
             # 'fatalities' expects an int/string, we give it a nested object
             # 'latitude' is missing
             json_payload=json.dumps({'data': [{'event_id_cnty': 'BAD1', 'fatalities': {}}]})
@@ -47,7 +45,6 @@ class TestOsintEngineResilience(unittest.TestCase):
         engine.add_source(
             name='ais_spam',
             url=f'{self.mock_server.ws_url}/ws/spam',
-            source_type='ws',
             adapter=SourceAdapter.AIS_STREAM
         )
         
@@ -70,7 +67,6 @@ class TestOsintEngineResilience(unittest.TestCase):
         engine.add_source(
             name='ais_spam',
             url=f'{self.mock_server.ws_url}/ws/spam',
-            source_type='ws',
             adapter=SourceAdapter.AIS_STREAM
         )
         
@@ -94,7 +90,6 @@ class TestOsintEngineResilience(unittest.TestCase):
         engine.add_source(
             name='poison_feed',
             url=f'{self.mock_server.http_url}/api/poison',
-            source_type='rest',
             adapter=SourceAdapter.ACLED, 
             poll_interval_sec=1
         )

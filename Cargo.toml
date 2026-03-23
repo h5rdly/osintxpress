@@ -20,12 +20,10 @@ tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "
 futures-util = "0.3"
 
 axum = { version = "0.8.8", features = ["ws"] }
-tower = "0.5.3" 
 wreq = { version = "6.0.0-rc.28", features = ["ws"] }
 wreq-util = "3.0.0-rc.10"
-# deboa = "0.0.9"
 
-geo = "0.32.0" 
+geoarrow = "0.7"
 h3o = "0.9.4" 
 
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py312"]}

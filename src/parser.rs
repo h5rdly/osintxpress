@@ -1,18 +1,159 @@
 use std::sync::Arc;
 
-use arrow::array::{Float64Builder, Int32Builder, Int64Builder, StringBuilder, RecordBatch};
-use arrow::datatypes::{DataType, Field, Schema};
-
 use serde_json::Value;
-
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::SourceAdapter;
+use arrow::array::{Float64Builder, Int32Builder, Int64Builder, StringBuilder, RecordBatch};
+use arrow::datatypes::{DataType, Field, Schema};
+
+use pyo3::prelude::*;
+
+
+#[allow(non_camel_case_types)]
+#[pyclass(eq, eq_int, from_py_object)]
+#[derive(Clone, PartialEq, Debug)]
+pub enum SourceAdapter {
+    ACLED,
+    GDELT_GEOJSON,
+    OPENSKY,
+    RSS,
+    NASA_EONET,
+    POLYMARKET,
+    USGS,
+    NWS,
+    BBC,
+    AL_JAZEERA,
+
+    // WebSocket - Add to is_ws() as well when adding here
+    BINANCE,
+    AIS_STREAM,
+}
+
+
+impl SourceAdapter {
+    pub fn default_url(&self) -> &'static str {
+        match self {
+            // REST
+            SourceAdapter::ACLED => "https://acleddata.com/api/acled/read",
+            SourceAdapter::OPENSKY => "https://opensky-network.org/api/states/all",
+            SourceAdapter::GDELT_GEOJSON => "https://api.gdeltproject.org/api/v2/geo/geo?format=geojson",
+            SourceAdapter::RSS => "https://www.reutersagency.com/feed/",
+            SourceAdapter::USGS => "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+            SourceAdapter::NWS => "https://api.weather.gov/alerts/active",
+            SourceAdapter::BBC => "http://feeds.bbci.co.uk/news/world/rss.xml",
+            SourceAdapter::AL_JAZEERA => "https://www.aljazeera.com/xml/rss/all.xml",
+            SourceAdapter::NASA_EONET => "https://eonet.gsfc.nasa.gov/api/v3/events",
+            SourceAdapter::POLYMARKET => "https://gamma-api.polymarket.com/events?limit=50&active=true",
+        
+            // WSS
+            SourceAdapter::BINANCE => "wss://stream.binance.com:9443/ws/btcusdt@trade",
+            SourceAdapter::AIS_STREAM => "wss://stream.aisstream.io/v0/stream",
+        }
+    }
+
+    pub fn is_ws(&self) -> bool {
+        matches!(self, 
+            SourceAdapter::BINANCE | 
+            SourceAdapter::AIS_STREAM
+        )
+    }
+}
+
+pub fn get_parser(adapter: &SourceAdapter) -> Box<dyn SourceParser> {
+    match adapter {
+        SourceAdapter::ACLED => Box::new(AcledParser),
+        SourceAdapter::OPENSKY => Box::new(OpenSkyParser),
+        
+        // Share the GeoJSON parser
+        SourceAdapter::GDELT_GEOJSON | SourceAdapter::NWS => Box::new(GdeltParser),
+        
+        // Share the RSS parser
+        SourceAdapter::RSS | SourceAdapter::BBC | SourceAdapter::AL_JAZEERA => Box::new(RssParser),
+        
+        SourceAdapter::USGS => Box::new(UsgsParser),
+        SourceAdapter::BINANCE => Box::new(BinanceParser),
+        SourceAdapter::AIS_STREAM => Box::new(AisStreamParser),
+        SourceAdapter::NASA_EONET => Box::new(EonetParser),
+        SourceAdapter::POLYMARKET => Box::new(PolymarketParser),
+    }
+}
 
 
 pub trait SourceParser: Send + Sync {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String>;
+}
+
+
+pub struct RssParser;
+impl SourceParser for RssParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut title_builder = StringBuilder::new();
+        let mut link_builder = StringBuilder::new();
+
+        for payload in payloads {
+            let mut reader = Reader::from_str(payload);
+            reader.config_mut().trim_text(true);
+
+            let mut buf = Vec::new();
+            let mut in_item = false;
+            let mut current_tag = String::new();
+            
+            let mut temp_title = String::new();
+            let mut temp_link = String::new();
+
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) => {
+                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                        if tag_name == "item" {
+                            in_item = true;
+                            temp_title.clear();
+                            temp_link.clear();
+                        }
+                        current_tag = tag_name;
+                    }
+                    Ok(Event::Text(e)) => {
+                        if in_item {
+                            if let Ok(text) = e.unescape() {
+                                if current_tag == "title" {
+                                    temp_title.push_str(&text);
+                                } else if current_tag == "link" {
+                                    temp_link.push_str(&text);
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::End(ref e)) => {
+                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                        if tag_name == "item" {
+                            in_item = false;
+                            title_builder.append_value(&temp_title);
+                            link_builder.append_value(&temp_link);
+                        }
+                        current_tag.clear();
+                    }
+                    Ok(Event::Eof) => break,
+                    Err(e) => {
+                        tracing::error!("XML parsing error: {:?}", e);
+                        break;
+                    }
+                    _ => (),
+                }
+                buf.clear();
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("title", DataType::Utf8, true),
+            Field::new("link", DataType::Utf8, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(title_builder.finish()),
+            Arc::new(link_builder.finish()),
+        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
+    }
 }
 
 
@@ -228,85 +369,170 @@ impl SourceParser for GdeltParser {
 }
 
 
-pub struct RssParser;
-impl SourceParser for RssParser {
+pub struct UsgsParser;
+impl SourceParser for UsgsParser {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut title_builder = StringBuilder::new();
-        let mut link_builder = StringBuilder::new();
+        let mut place_builder = StringBuilder::new();
+        let mut mag_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut lat_builder = Float64Builder::new();
 
         for payload in payloads {
-            let mut reader = Reader::from_str(payload);
-            reader.config_mut().trim_text(true);
+            if let Ok(val) = serde_json::from_str::<Value>(payload) {
+                if let Some(features) = val.get("features").and_then(|f| f.as_array()) {
+                    for feature in features {
+                        if let Some(props) = feature.get("properties") {
+                            place_builder.append_option(props.get("place").and_then(|v| v.as_str()));
+                            mag_builder.append_option(props.get("mag").and_then(|v| v.as_f64()));
+                        } else {
+                            place_builder.append_null();
+                            mag_builder.append_null();
+                        }
 
-            let mut buf = Vec::new();
-            let mut in_item = false;
-            let mut current_tag = String::new();
-            
-            let mut temp_title = String::new();
-            let mut temp_link = String::new();
-
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Start(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                        if tag_name == "item" {
-                            in_item = true;
-                            temp_title.clear();
-                            temp_link.clear();
-                        }
-                        current_tag = tag_name;
-                    }
-                    Ok(Event::Text(e)) => {
-                        if in_item {
-                            if let Ok(text) = e.unescape() {
-                                if current_tag == "title" {
-                                    temp_title.push_str(&text);
-                                } else if current_tag == "link" {
-                                    temp_link.push_str(&text);
-                                }
-                            }
+                        if let Some(coords) = feature.get("geometry").and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
+                            lon_builder.append_option(coords.get(0).and_then(|v| v.as_f64()));
+                            lat_builder.append_option(coords.get(1).and_then(|v| v.as_f64()));
+                        } else {
+                            lon_builder.append_null();
+                            lat_builder.append_null();
                         }
                     }
-                    Ok(Event::End(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                        if tag_name == "item" {
-                            in_item = false;
-                            title_builder.append_value(&temp_title);
-                            link_builder.append_value(&temp_link);
-                        }
-                        current_tag.clear();
-                    }
-                    Ok(Event::Eof) => break,
-                    Err(e) => {
-                        tracing::error!("XML parsing error: {:?}", e);
-                        break;
-                    }
-                    _ => (),
                 }
-                buf.clear();
+            }
+        }
+        
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("place", DataType::Utf8, true),
+            Field::new("magnitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("latitude", DataType::Float64, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(place_builder.finish()),
+            Arc::new(mag_builder.finish()),
+            Arc::new(lon_builder.finish()),
+            Arc::new(lat_builder.finish()),
+        ]).map_err(|e| format!("Failed to build USGS batch: {}", e))
+    }
+}
+
+
+pub struct BinanceParser;
+impl SourceParser for BinanceParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut price_builder = Float64Builder::new();
+        let mut qty_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<Value>(payload) {
+                // Binance returns price and quantity as strings in the JSON
+                if let Some(p_str) = val.get("p").and_then(|v| v.as_str()) {
+                    price_builder.append_option(p_str.parse::<f64>().ok());
+                } else {
+                    price_builder.append_null();
+                }
+                
+                if let Some(q_str) = val.get("q").and_then(|v| v.as_str()) {
+                    qty_builder.append_option(q_str.parse::<f64>().ok());
+                } else {
+                    qty_builder.append_null();
+                }
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("price", DataType::Float64, true),
+            Field::new("quantity", DataType::Float64, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(price_builder.finish()),
+            Arc::new(qty_builder.finish()),
+        ]).map_err(|e| format!("Failed to build Binance batch: {}", e))
+    }
+}
+
+
+pub struct EonetParser;
+impl SourceParser for EonetParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut title_builder = StringBuilder::new();
+        let mut cat_builder = StringBuilder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut lat_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(events) = val.get("events").and_then(|e| e.as_array()) {
+                    for event in events {
+                        title_builder.append_option(event.get("title").and_then(|v| v.as_str()));
+                        
+                        if let Some(cats) = event.get("categories").and_then(|c| c.as_array()) {
+                            cat_builder.append_option(cats.get(0).and_then(|c| c.get("title")).and_then(|v| v.as_str()));
+                        } else {
+                            cat_builder.append_null();
+                        }
+
+                        if let Some(geoms) = event.get("geometry").and_then(|g| g.as_array()) {
+                            if let Some(coords) = geoms.get(0).and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
+                                lon_builder.append_option(coords.get(0).and_then(|v| v.as_f64()));
+                                lat_builder.append_option(coords.get(1).and_then(|v| v.as_f64()));
+                            } else {
+                                lon_builder.append_null(); lat_builder.append_null();
+                            }
+                        } else {
+                            lon_builder.append_null(); lat_builder.append_null();
+                        }
+                    }
+                }
+            }
+        }
+        
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("title", DataType::Utf8, true),
+            Field::new("category", DataType::Utf8, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("latitude", DataType::Float64, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(title_builder.finish()),
+            Arc::new(cat_builder.finish()),
+            Arc::new(lon_builder.finish()),
+            Arc::new(lat_builder.finish()),
+        ]).map_err(|e| format!("Failed to build EONET batch: {}", e))
+    }
+}
+
+
+pub struct PolymarketParser;
+impl SourceParser for PolymarketParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut title_builder = StringBuilder::new();
+        let mut volume_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(events) = val.as_array() {
+                    for event in events {
+                        title_builder.append_option(event.get("title").and_then(|v| v.as_str()));
+                        volume_builder.append_option(event.get("volume").and_then(|v| v.as_f64()));
+                    }
+                }
             }
         }
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("title", DataType::Utf8, true),
-            Field::new("link", DataType::Utf8, true),
+            Field::new("volume", DataType::Float64, true),
         ]));
 
         RecordBatch::try_new(schema, vec![
             Arc::new(title_builder.finish()),
-            Arc::new(link_builder.finish()),
-        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
+            Arc::new(volume_builder.finish()),
+        ]).map_err(|e| format!("Failed to build Polymarket batch: {}", e))
     }
 }
 
 
-pub fn get_parser(adapter: &SourceAdapter) -> Box<dyn SourceParser> {
-
-    match adapter {
-        SourceAdapter::ACLED => Box::new(AcledParser),
-        SourceAdapter::GDELT_GEOJSON => Box::new(GdeltParser),
-        SourceAdapter::OPENSKY => Box::new(OpenSkyParser),
-        SourceAdapter::REUTERS => Box::new(RssParser),
-        SourceAdapter::AIS_STREAM => Box::new(AisStreamParser),
-    }
-}
