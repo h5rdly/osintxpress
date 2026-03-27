@@ -42,7 +42,7 @@ class TestOsintEngineResilience(unittest.TestCase):
 
         engine = OsintEngine(worker_threads=2)
         
-        engine.add_source(
+        engine.add_ws_source(
             name='ais_spam',
             url=f'{self.mock_server.ws_url}/ws/spam',
             adapter=SourceAdapter.AIS_STREAM
@@ -62,9 +62,10 @@ class TestOsintEngineResilience(unittest.TestCase):
 
 
     def test_buffer_cap_prevents_oom(self):
+
         engine = OsintEngine(worker_threads=2)
         
-        engine.add_source(
+        engine.add_ws_source(
             name='ais_spam',
             url=f'{self.mock_server.ws_url}/ws/spam',
             adapter=SourceAdapter.AIS_STREAM
@@ -87,7 +88,7 @@ class TestOsintEngineResilience(unittest.TestCase):
 
         engine = OsintEngine(worker_threads=2)
         
-        engine.add_source(
+        engine.add_rest_source(
             name='poison_feed',
             url=f'{self.mock_server.http_url}/api/poison',
             adapter=SourceAdapter.ACLED, 

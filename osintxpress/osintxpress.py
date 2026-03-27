@@ -49,7 +49,43 @@ _rust_lib = _load_rust_pip_or_dev()
 globals().update({k: v for k, v in vars(_rust_lib).items() if not k.startswith('__')})
 
 
-def supported_sources() -> list[str]:
+
+def _to_upper_snake_case(name: str) -> str:
+
+    result = []
+    for idx, char in enumerate(name):
+        print(name)
+        if char.isupper() and idx > 0 and not name[idx - 1].isupper():
+            result.append('_')
+        result.append(char)
+    return "".join(result).upper()
+
+
+class SourceAdapter:
+    pass
+
+_builtins = _rust_lib.sources()
+
+
+for source in _builtins:
+    setattr(SourceAdapter, source.name, source)
+
+
+def login_telegram(api_id: int, api_hash: str, phone: str, session_path: str = "osint.session"):
+    ''' Interactively generate a Telegram session file '''
     
-    sources = [k for k in dir(SourceAdapter) if not k.startswith('_')]
-    return sources
+    print(f"Connecting to Telegram for {phone}...")
+    
+    def get_code_from_user():
+        return input(f"\n[!] Enter the 5-digit code Telegram sent to {phone}: ")
+    
+    # Call the Rust backend
+    _rust_lib.login_telegram(api_id, api_hash, phone, session_path, get_code_from_user)
+    
+    print(f"Telegram session saved to: {session_path}")
+    print("You can now pass this session file path to engine.add_telegram_source()")
+
+
+def supported_sources() -> list[str]:
+
+    return [k for k in dir(SourceAdapter) if not k.startswith('_')]

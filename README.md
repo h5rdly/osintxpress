@@ -20,7 +20,7 @@ from osintxpress import OsintEngine, SourceAdapter
 
 
 engine = OsintEngine(worker_threads=2)
-engine.add_source(name="flights", adapter=SourceAdapter.OPENSKY, poll_interval_sec=10)
+engine.add_rest_source(name="flights", adapter=SourceAdapter.OPENSKY, poll_interval_sec=10)
 engine.start_all()
 
 .

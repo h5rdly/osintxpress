@@ -3,39 +3,30 @@ use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
-use futures_util::{StreamExt}; 
 
 use arrow::record_batch::RecordBatch;
 
-use crate::client::HttpClient; 
 use crate::parser::SourceParser;
+use crate::runner::ConnectionRunner;
 
-
-#[derive(Clone)]
-pub enum ConnectionType {
-    Rest { interval_sec: u64, headers: Option<HashMap<String, String>>,},
-    WebSocket { init_message: Option<String> }, 
-}
 
 pub struct Source {
     pub name: String,
     pub url: String,
-    pub conn_type: ConnectionType,
-    pub parser: Box<dyn SourceParser>, 
+    pub runner: Box<dyn ConnectionRunner>, 
+    pub parser: Box<dyn SourceParser>,     
 }
+
 
 pub struct Engine {
     rt: Runtime,
     active_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
     sources: Arc<Mutex<HashMap<String, Source>>>,
     buffer: Arc<Mutex<HashMap<String, Vec<String>>>>,
-    http_client: Arc<dyn HttpClient>,
 }
 
-
 impl Engine {
-
-    pub fn new(worker_threads: usize, http_client: Arc<dyn HttpClient>) -> Self {
+    pub fn new(worker_threads: usize) -> Self {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(worker_threads)
             .enable_all()
@@ -47,18 +38,21 @@ impl Engine {
             active_tasks: Arc::new(Mutex::new(HashMap::new())),
             sources: Arc::new(Mutex::new(HashMap::new())),
             buffer: Arc::new(Mutex::new(HashMap::new())),
-            http_client, 
         }
     }
 
-
-    pub fn add_source(&self, name: String, url: String, conn_type: ConnectionType, parser: Box<dyn SourceParser>) {
+    pub fn add_source(
+        &self, 
+        name: String, 
+        url: String, 
+        runner: Box<dyn ConnectionRunner>, 
+        parser: Box<dyn SourceParser>
+    ) {
         self.sources.lock().unwrap().insert(
             name.clone(), 
-            Source { name, url, conn_type, parser }
+            Source { name, url, runner, parser }
         );
     }
-
 
     pub fn start_source(&self, name: &str) -> Result<(), String> {
         let mut tasks = self.active_tasks.lock().unwrap();
@@ -68,115 +62,21 @@ impl Engine {
             return Ok(());
         }
 
-        let (s_name, url, conn_type) = {
+        let handle = {
             let sources_guard = self.sources.lock().unwrap();
             let source = sources_guard.get(name).ok_or_else(|| format!("Source '{}' not found", name))?;
-            (source.name.clone(), source.url.clone(), source.conn_type.clone())
-        }; 
+            
+            let max_buffer_size = 50;
 
-        let buffer = self.buffer.clone();
-        let max_buffer_size = 50;
-
-        let handle = match conn_type {
-           ConnectionType::Rest { interval_sec, headers } => {
-                let client = self.http_client.clone();
-                
-                self.rt.spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_sec));
-                    let mut consecutive_errors = 0; 
-                    
-                    loop {
-                        interval.tick().await; 
-                        tracing::debug!("Fetching from {}...", s_name);
-                        
-                        match client.get(&url, headers.clone()).await {
-                            Ok(bytes) => {
-                                consecutive_errors = 0; 
-                                if let Ok(text) = String::from_utf8(bytes) {
-                                    let mut guard = buffer.lock().unwrap();
-                                    let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
-                                    
-                                    queue.push(text);
-                                                                    
-                                    if queue.len() > max_buffer_size {
-                                        let excess = queue.len() - max_buffer_size;
-                                        queue.drain(0..excess); 
-                                        tracing::warn!("Buffer capped for {}. Python polling is too slow!", s_name);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                consecutive_errors += 1;
-                                tracing::error!("Failed to fetch {} (Strike {}): {}", s_name, consecutive_errors, e);
-                                
-                                if consecutive_errors >= 5 {
-                                    tracing::warn!("Circuit breaker tripped for {}. Sleeping for 5 minutes.", s_name);
-                                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                                    consecutive_errors = 0; 
-                                }
-                            }
-                        }
-                    }
-                })
-            },
-
-            ConnectionType::WebSocket { init_message } => {
-                let ws_client = wreq::Client::new();
-                
-                self.rt.spawn(async move {
-                    let mut backoff_sec = 1; 
-                    
-                    loop {
-                        tracing::debug!("Connecting WS to {}...", url);
-                        
-                        match ws_client.websocket(&url).send().await {
-                            Ok(response) => {
-                                // Extract the WebSocket stream
-                                match response.into_websocket().await {
-                                    Ok(mut ws_stream) => {
-                                        tracing::info!("Connected to WS: {}", s_name);
-                                        backoff_sec = 1; 
-                                        
-                                        // Subscription payload - if exists
-                                        if let Some(msg) = &init_message {
-                                            if let Err(e) = ws_stream.send(wreq::ws::message::Message::text(msg.clone())).await {
-                                                tracing::error!("Failed to send init_message to {}: {}", s_name, e);
-                                            } else {
-                                                tracing::info!("Sent subscription payload to {}", s_name);
-                                            }
-                                        }
-                                        
-                                        while let Some(Ok(msg)) = ws_stream.next().await {
-                                            if let wreq::ws::message::Message::Text(text) = msg {
-                                                let mut guard = buffer.lock().unwrap();
-                                                let queue = guard.entry(s_name.clone()).or_insert_with(Vec::new);
-                                                
-                                                queue.push(text.to_string());
-                                                
-                                                if queue.len() > max_buffer_size {
-                                                    let excess = queue.len() - max_buffer_size;
-                                                    queue.drain(0..excess);
-                                                }
-                                            }
-                                        }
-                                        tracing::warn!("WS stream closed for {}. Attempting reconnect...", s_name);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("WS Upgrade failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
-                                        tokio::time::sleep(std::time::Duration::from_secs(backoff_sec)).await;
-                                        if backoff_sec < 60 { backoff_sec *= 2; }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("WS Connection failed for {}: {}. Retrying in {}s", s_name, e, backoff_sec);
-                                tokio::time::sleep(std::time::Duration::from_secs(backoff_sec)).await;
-                                if backoff_sec < 60 { backoff_sec *= 2; }
-                            }
-                        }
-                    }
-                })
-            }
+            // We must enter the Tokio runtime context so the runner can safely call `tokio::spawn`
+            let _guard = self.rt.enter();
+            
+            source.runner.spawn(
+                source.name.clone(),
+                source.url.clone(),
+                self.buffer.clone(),
+                max_buffer_size
+            )
         };
 
         tasks.insert(name.to_string(), handle);
@@ -185,14 +85,12 @@ impl Engine {
         Ok(())
     }
 
-
     pub fn stop_source(&self, name: &str) {
         if let Some(handle) = self.active_tasks.lock().unwrap().remove(name) {
             handle.abort();
             tracing::info!("Stopped source: {}", name);
         }
     }
-
 
     pub fn start_all(&self) {
         let names: Vec<String> = self.sources.lock().unwrap().keys().cloned().collect();
@@ -209,11 +107,14 @@ impl Engine {
         tracing::info!("Stopped all background OSINT tasks");
     }
 
-
     pub fn poll_data(&self) -> HashMap<String, RecordBatch> {
-        let mut buffer_guard = self.buffer.lock().unwrap();
-        let raw_data = buffer_guard.clone();
-        buffer_guard.clear(); 
+        // Lock, clone, and clear the buffer as fast as possible to unblock writers
+        let raw_data = {
+            let mut buffer_guard = self.buffer.lock().unwrap();
+            let data = buffer_guard.clone();
+            buffer_guard.clear(); 
+            data
+        };
         
         let mut parsed_data = HashMap::new();
         let sources = self.sources.lock().unwrap();
@@ -233,9 +134,10 @@ impl Engine {
 
         parsed_data
     }
-
 }
 
+
+// Ensure background tasks are killed if the Python object is garbage collected
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop_all();

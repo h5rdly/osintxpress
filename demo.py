@@ -11,7 +11,7 @@ from geoarrow.rust.core import points
 from osintxpress import OsintEngine, SourceAdapter
 
 engine = OsintEngine(worker_threads=2)
-engine.add_source(
+engine.add_rest_source(
     name='flights', # Optional name
     adapter=SourceAdapter.OPENSKY,
     poll_interval_sec=10 

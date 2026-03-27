@@ -114,61 +114,62 @@ class TestOsintEngineIntegration(unittest.TestCase):
     def test_worldmonitor_backends(self):
 
         engine = OsintEngine(worker_threads=2)
-        
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/api/acled/read',
+        base_url = self.mock_server.http_url
+
+        engine.add_rest_source(
+            url=f'{base_url}/api/acled/read',
             adapter=SourceAdapter.ACLED, 
             poll_interval_sec=1
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/gdelt/v2/geo',
+        engine.add_rest_source(
+            url=f'{base_url}/gdelt/v2/geo',
             adapter=SourceAdapter.GDELT_GEOJSON,
             poll_interval_sec=1
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/opensky/states/all',
+        engine.add_rest_source(
+            url=f'{base_url}/opensky/states/all',
             adapter=SourceAdapter.OPENSKY,
             poll_interval_sec=1
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/rss/reuters',
-            adapter=SourceAdapter.RSS,
+        engine.add_rest_source(
+            url=f'{base_url}/rss/reuters',
+            adapter=SourceAdapter.GOOGLE_NEWS_REUTERS,
             poll_interval_sec=1
         )
         
-        engine.add_source(
+        engine.add_ws_source(
             url=f'{self.mock_server.ws_url}/ws/aisstream',
             adapter=SourceAdapter.AIS_STREAM
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/news/world/rss.xml',
+        engine.add_rest_source(
+            url=f'{base_url}/news/world/rss.xml',
             adapter=SourceAdapter.BBC,
             poll_interval_sec=1
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/earthquakes/feed/v1.0/summary/all_hour.geojson',
+        engine.add_rest_source(
+            url=f'{base_url}/earthquakes/feed/v1.0/summary/all_hour.geojson',
             adapter=SourceAdapter.USGS,
             poll_interval_sec=1
         )
         
-        engine.add_source(
+        engine.add_ws_source(
             url=f'{self.mock_server.ws_url}/ws/btcusdt@trade',
             adapter=SourceAdapter.BINANCE
         )
 
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/api/v3/events',
+        engine.add_rest_source(
+            url=f'{base_url}/api/v3/events',
             adapter=SourceAdapter.NASA_EONET,
             poll_interval_sec=1
         )
         
-        engine.add_source(
-            url=f'{self.mock_server.http_url}/events',
+        engine.add_rest_source(
+            url=f'{base_url}/events',
             adapter=SourceAdapter.POLYMARKET,
             poll_interval_sec=1
         )
@@ -184,7 +185,7 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert 'ais_stream' in data
         assert 'opensky' in data
         assert 'gdelt_geojson' in data
-        assert 'rss' in data
+        assert 'google_news_reuters' in data
         assert 'bbc' in data
         assert 'usgs' in data
         assert 'binance' in data
@@ -221,7 +222,7 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert gdelt_df['longitude'][0] == 35.21
 
         # Check RSS (Reuters)
-        reuters_df = pl.from_arrow(data['rss'])
+        reuters_df = pl.from_arrow(data['google_news_reuters'])
         assert len(reuters_df) >= 1
         assert 'title' in reuters_df.columns
         assert reuters_df['title'][0] == 'Test News'

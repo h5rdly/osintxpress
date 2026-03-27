@@ -7,78 +7,52 @@ use quick_xml::Reader;
 use arrow::array::{Float64Builder, Int32Builder, Int64Builder, StringBuilder, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
 
-use pyo3::prelude::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParserType {
+    Acled,
+    OpenSky,
+    GdeltGeojson,
+    GoogleNewsReuters,
+    NasaEonet,
+    Polymarket,
+    Usgs,
+    Nws,
+    Bbc,
+    AlJazeera,
 
-#[allow(non_camel_case_types)]
-#[pyclass(eq, eq_int, from_py_object)]
-#[derive(Clone, PartialEq, Debug)]
-pub enum SourceAdapter {
-    ACLED,
-    GDELT_GEOJSON,
-    OPENSKY,
-    RSS,
-    NASA_EONET,
-    POLYMARKET,
-    USGS,
-    NWS,
-    BBC,
-    AL_JAZEERA,
+    Binance,
+    AisStream,
 
-    // WebSocket - Add to is_ws() as well when adding here
-    BINANCE,
-    AIS_STREAM,
+    Telegram,
 }
 
 
-impl SourceAdapter {
-    pub fn default_url(&self) -> &'static str {
-        match self {
-            // REST
-            SourceAdapter::ACLED => "https://acleddata.com/api/acled/read",
-            SourceAdapter::OPENSKY => "https://opensky-network.org/api/states/all",
-            SourceAdapter::GDELT_GEOJSON => "https://api.gdeltproject.org/api/v2/geo/geo?format=geojson",
-            SourceAdapter::RSS => "https://www.reutersagency.com/feed/",
-            SourceAdapter::USGS => "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
-            SourceAdapter::NWS => "https://api.weather.gov/alerts/active",
-            SourceAdapter::BBC => "http://feeds.bbci.co.uk/news/world/rss.xml",
-            SourceAdapter::AL_JAZEERA => "https://www.aljazeera.com/xml/rss/all.xml",
-            SourceAdapter::NASA_EONET => "https://eonet.gsfc.nasa.gov/api/v3/events",
-            SourceAdapter::POLYMARKET => "https://gamma-api.polymarket.com/events?limit=50&active=true",
+pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
+    match parser_type {
+        ParserType::Acled         => Box::new(AcledParser),
+        ParserType::OpenSky       => Box::new(OpenSkyParser),
         
-            // WSS
-            SourceAdapter::BINANCE => "wss://stream.binance.com:9443/ws/btcusdt@trade",
-            SourceAdapter::AIS_STREAM => "wss://stream.aisstream.io/v0/stream",
-        }
-    }
+        ParserType::GdeltGeojson  => Box::new(GdeltParser), 
+        ParserType::NasaEonet     => Box::new(EonetParser),
+        
+        ParserType::Polymarket    => Box::new(PolymarketParser),
+        ParserType::Usgs          => Box::new(UsgsParser),
+        
+        ParserType::GoogleNewsReuters => Box::new(RssParser),
+        ParserType::Nws           => Box::new(RssParser),
+        ParserType::Bbc           => Box::new(RssParser),
+        ParserType::AlJazeera     => Box::new(RssParser),
 
-    pub fn is_ws(&self) -> bool {
-        matches!(self, 
-            SourceAdapter::BINANCE | 
-            SourceAdapter::AIS_STREAM
-        )
+        ParserType::Binance       => Box::new(BinanceParser),
+        ParserType::AisStream     => Box::new(AisStreamParser),
+        
+        ParserType::Telegram      => Box::new(TelegramParser),
     }
 }
 
-pub fn get_parser(adapter: &SourceAdapter) -> Box<dyn SourceParser> {
-    match adapter {
-        SourceAdapter::ACLED => Box::new(AcledParser),
-        SourceAdapter::OPENSKY => Box::new(OpenSkyParser),
-        
-        // Share the GeoJSON parser
-        SourceAdapter::GDELT_GEOJSON | SourceAdapter::NWS => Box::new(GdeltParser),
-        
-        // Share the RSS parser
-        SourceAdapter::RSS | SourceAdapter::BBC | SourceAdapter::AL_JAZEERA => Box::new(RssParser),
-        
-        SourceAdapter::USGS => Box::new(UsgsParser),
-        SourceAdapter::BINANCE => Box::new(BinanceParser),
-        SourceAdapter::AIS_STREAM => Box::new(AisStreamParser),
-        SourceAdapter::NASA_EONET => Box::new(EonetParser),
-        SourceAdapter::POLYMARKET => Box::new(PolymarketParser),
-    }
-}
 
+// -- Parser Trait and implementations
 
 pub trait SourceParser: Send + Sync {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String>;
@@ -535,4 +509,40 @@ impl SourceParser for PolymarketParser {
     }
 }
 
+
+pub struct TelegramParser;
+impl SourceParser for TelegramParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut id_builder = Int64Builder::new();
+        let mut channel_builder = StringBuilder::new();
+        let mut text_builder = StringBuilder::new();
+        let mut date_builder = Int64Builder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                id_builder.append_option(val.get("message_id").and_then(|v| v.as_i64()));
+                channel_builder.append_option(val.get("channel").and_then(|v| v.as_str()));
+                text_builder.append_option(val.get("text").and_then(|v| v.as_str()));
+                date_builder.append_option(val.get("date").and_then(|v| v.as_i64()));
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("message_id", DataType::Int64, true),
+            Field::new("channel", DataType::Utf8, true),
+            Field::new("text", DataType::Utf8, true),
+            Field::new("date", DataType::Int64, true),
+        ]));
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_builder.finish()),
+                Arc::new(channel_builder.finish()),
+                Arc::new(text_builder.finish()),
+                Arc::new(date_builder.finish()),
+            ],
+        ).map_err(|e| format!("Failed to build Telegram batch: {}", e))
+    }
+}
 
