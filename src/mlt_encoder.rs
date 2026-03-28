@@ -1,16 +1,19 @@
 use arrow::record_batch::RecordBatch;
-use arrow::array::{AsArray, Float64Array};
-use arrow::datatypes::DataType;
+use arrow::array::{
+    Array, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray, StringArray,
+    StringViewArray,
+};
 
-use mlt_core::convert::geojson; 
-use mlt_core::frames::layer::LayerEncoder;
-use mlt_core::frames::model::{FeatureTable, Column, ScalarType};
+use mlt_core::v01::{TileLayer01, TileFeature, PropValue, Tile01Encoder};
+use mlt_core::geojson::Geom32;
+use mlt_core::EncodedLayer;
+
+use geo_types::Point;
 
 
 pub struct MltBridge;
 
 impl MltBridge {
-    // Convert Apache Arrow RecordBatch to an MLT (MapLibre Tile) binary payload
     pub fn encode_from_arrow(
         layer_name: &str, 
         batch: &RecordBatch, 
@@ -18,7 +21,6 @@ impl MltBridge {
         lon_col: &str
     ) -> Result<Vec<u8>, String> {
         
-        // Extract the coordinate arrays
         let lat_array = batch.column_by_name(lat_col)
             .ok_or_else(|| "Latitude column not found".to_string())?
             .as_any().downcast_ref::<Float64Array>()
@@ -29,58 +31,77 @@ impl MltBridge {
             .as_any().downcast_ref::<Float64Array>()
             .ok_or_else(|| "Longitude must be Float64".to_string())?;
 
-        // Build the MLT Feature Table schema
-        let mut columns = vec![
-            Column {
-                name: "geometry".to_string(),
-                nullable: false,
-                column_type: mlt_core::frames::model::ColumnType::Geometry,
-            }
-        ];
-
-        // Map Arrow Schema to MLT Schema for properties
+        let mut property_names = Vec::new();
         for field in batch.schema().fields() {
             if field.name() == lat_col || field.name() == lon_col { continue; }
-            
-            let mlt_type = match field.data_type() {
-                DataType::Utf8 => ScalarType::String,
-                DataType::Float64 => ScalarType::Double,
-                DataType::Int64 => ScalarType::Int64,
-                DataType::Int32 => ScalarType::Int32,
-                _ => continue, // Skip unsupported types for now
-            };
-
-            columns.push(Column {
-                name: field.name().clone(),
-                nullable: field.is_nullable(),
-                column_type: mlt_core::frames::model::ColumnType::Scalar(mlt_type),
-            });
+            property_names.push(field.name().clone());
         }
 
-        let table = FeatureTable {
-            name: layer_name.to_string(),
-            extent: 4096, // Standard Web Mercator tile extent
-            columns,
-        };
+        let mut features = Vec::with_capacity(batch.num_rows());
 
-        let mut encoder = LayerEncoder::new(table);
-        
         for i in 0..batch.num_rows() {
             if lat_array.is_null(i) || lon_array.is_null(i) { continue; }
             
-            // In a production setup, we'd use the MLT topology builders here.
-            // For now, this is where you map the X/Y into the space-filling curve.
-            let _lon = lon_array.value(i);
-            let _lat = lat_array.value(i);
+            let lon = lon_array.value(i);
+            let lat = lat_array.value(i);
             
-            // Encode the properties into the columnar streams
-            // encoder.push_scalar(col_idx, value);
+            // MapLibre Tiles use an internal grid.
+            // For a global unprojected dataset, scale lon/lat to fit standard integer bounds.
+            let px = (lon * 10000.0) as i32;
+            let py = (lat * 10000.0) as i32;
+            
+            let geometry = Geom32::Point(Point::new(px, py));
+
+            let mut properties = Vec::new();
+            for name in &property_names {
+                let col = batch.column_by_name(name).unwrap();
+                if col.is_null(i) {
+                    properties.push(PropValue::Str(None));
+                    continue;
+                }
+                
+                // Downcasting for standard Arrow and Polars types
+                if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+                    properties.push(PropValue::Str(Some(arr.value(i).to_string())));
+                } else if let Some(arr) = col.as_any().downcast_ref::<LargeStringArray>() {
+                    properties.push(PropValue::Str(Some(arr.value(i).to_string())));
+                } else if let Some(arr) = col.as_any().downcast_ref::<StringViewArray>() {
+                    properties.push(PropValue::Str(Some(arr.value(i).to_string())));
+                } else if let Some(arr) = col.as_any().downcast_ref::<Float64Array>() {
+                    properties.push(PropValue::F64(Some(arr.value(i))));
+                } else if let Some(arr) = col.as_any().downcast_ref::<Float32Array>() {
+                    properties.push(PropValue::F32(Some(arr.value(i))));
+                } else if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
+                    properties.push(PropValue::I64(Some(arr.value(i))));
+                } else if let Some(arr) = col.as_any().downcast_ref::<Int32Array>() {
+                    properties.push(PropValue::I32(Some(arr.value(i))));
+                } else {
+                    properties.push(PropValue::Str(None));
+                }
+            }
+
+            features.push(TileFeature {
+                id: Some(i as u64),
+                geometry,
+                properties,
+            });
         }
 
-        // Finalize compression (FastPFor, FSST, etc.) and return bytes
-        let mlt_bytes = encoder.finish().map_err(|e| e.to_string())?;
-        Ok(mlt_bytes)
+        let tile_layer = TileLayer01 {
+            name: layer_name.to_string(),
+            extent: 4096,
+            property_names,
+            features,
+        };
+
+        let (encoded_layer_01, _encoder) = Tile01Encoder::encode_auto(&tile_layer)
+            .map_err(|e| e.to_string())?;
+
+        let encoded_layer = EncodedLayer::Tag01(encoded_layer_01);
+        
+        let mut buf = Vec::new();
+        encoded_layer.write_to(&mut buf).map_err(|e| e.to_string())?;
+
+        Ok(buf)
     }
 }
-
-

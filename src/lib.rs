@@ -6,8 +6,7 @@ use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyAny};
-
+use pyo3::types::{PyDict, PyBytes, PyAny};
 use pyo3_arrow::PyRecordBatch; 
 
 mod engine;
@@ -15,10 +14,10 @@ mod mock_server;
 mod client;
 mod parser;
 mod runner;
+mod mlt_encoder;
 
 use engine::Engine;
 use parser::ParserType;
-
 
 
 #[pyclass(frozen, eq, from_py_object)]
@@ -207,6 +206,8 @@ impl OsintEngine {
 }
 
 
+// -- Some utility / helper functions
+
 #[pyfunction]
 #[pyo3(signature = (api_id, api_hash, phone, session_path, code_callback))]
 fn login_telegram<'py>(
@@ -240,6 +241,66 @@ fn login_telegram<'py>(
 }
 
 
+#[pyfunction]
+#[pyo3(signature = (layer_name, batch, lat_col="latitude", lon_col="longitude"))]
+fn arrow_to_mlt<'py>(
+    py: Python<'py>,
+    layer_name: &str,
+    batch: PyRecordBatch,
+    lat_col: &str,
+    lon_col: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let arrow_batch = batch.into_inner();
+    
+    match mlt_encoder::MltBridge::encode_from_arrow(layer_name, &arrow_batch, lat_col, lon_col) {
+        Ok(mlt_bytes) => Ok(PyBytes::new(py, &mlt_bytes)),
+        Err(e) => Err(pyo3::exceptions::PyValueError::new_err(e)),
+    }
+}
+
+
+#[pyfunction]
+fn list_mlt_layers(mlt_bytes: &[u8]) -> PyResult<Vec<String>> {
+
+    let layers = mlt_core::Parser::default().parse_layers(mlt_bytes)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MLT Parse error: {}", e)))?;
+        
+    Ok(layers.iter()
+        .filter_map(|l| l.as_layer01().map(|l| l.name.to_string()))
+        .collect())
+}
+
+
+#[pyfunction]
+fn mvt_to_geojson(mvt_bytes: &[u8]) -> PyResult<String> {
+
+    let fc = mlt_core::mvt::mvt_to_feature_collection(mvt_bytes.to_vec())
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MVT Parse error: {}", e)))?;
+        
+    serde_json::to_string(&fc)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON Serialization error: {}", e)))
+}
+
+
+#[pyfunction]
+fn mlt_to_geojson(mlt_bytes: &[u8]) -> PyResult<String> {
+    let mut parser = mlt_core::Parser::default();
+    
+    // Parse the layers, but keep them mutable
+    let mut layers = parser.parse_layers(mlt_bytes)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MLT Parse error: {}", e)))?;
+        
+    let mut decoder = mlt_core::Decoder::default();
+        
+    // Pass the mutable layers and decoder directly
+    let fc = mlt_core::geojson::FeatureCollection::from_layers(&mut layers, &mut decoder)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("GeoJSON error: {}", e)))?;
+
+    serde_json::to_string(&fc)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON Serialization error: {}", e)))
+}
+
+
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = tracing_subscriber::fmt::try_init();
@@ -250,6 +311,11 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     m.add_function(wrap_pyfunction!(login_telegram, m)?)?;
     m.add_function(wrap_pyfunction!(sources, m)?)?;
+
+    m.add_function(wrap_pyfunction!(arrow_to_mlt, m)?)?;
+    m.add_function(wrap_pyfunction!(list_mlt_layers, m)?)?;
+    m.add_function(wrap_pyfunction!(mvt_to_geojson, m)?)?;
+    m.add_function(wrap_pyfunction!(mlt_to_geojson, m)?)?;
 
     Ok(())
 }
