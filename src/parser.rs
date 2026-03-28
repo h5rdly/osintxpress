@@ -10,6 +10,11 @@ use arrow::datatypes::{DataType, Field, Schema};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserType {
+    Binance,
+    AisStream,
+    
+    Telegram,
+
     Acled,
     OpenSky,
     GdeltGeojson,
@@ -21,15 +26,24 @@ pub enum ParserType {
     Bbc,
     AlJazeera,
 
-    Binance,
-    AisStream,
-
-    Telegram,
+    CloudflareRadar,
+    NasaFirms,
+    Urlhaus,
+    Fred,
+    Ucdp,
+    Oref,
+    CoinGecko,
+    OpenMeteo,
 }
 
 
 pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
     match parser_type {
+        ParserType::Binance       => Box::new(BinanceParser),
+        ParserType::AisStream     => Box::new(AisStreamParser),
+        
+        ParserType::Telegram      => Box::new(TelegramParser),
+
         ParserType::Acled         => Box::new(AcledParser),
         ParserType::OpenSky       => Box::new(OpenSkyParser),
         
@@ -44,11 +58,16 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::Bbc           => Box::new(RssParser),
         ParserType::AlJazeera     => Box::new(RssParser),
 
-        ParserType::Binance       => Box::new(BinanceParser),
-        ParserType::AisStream     => Box::new(AisStreamParser),
-        
-        ParserType::Telegram      => Box::new(TelegramParser),
+        ParserType::CloudflareRadar => Box::new(CloudflareRadarParser),
+        ParserType::NasaFirms       => Box::new(NasaFirmsParser),
+        ParserType::Urlhaus         => Box::new(UrlhausParser),
+        ParserType::Fred      => Box::new(FredParser),
+        ParserType::Ucdp      => Box::new(UcdpParser),
+        ParserType::Oref      => Box::new(OrefParser),
+        ParserType::CoinGecko => Box::new(CoinGeckoParser),
+        ParserType::OpenMeteo => Box::new(OpenMeteoParser),
     }
+
 }
 
 
@@ -546,3 +565,259 @@ impl SourceParser for TelegramParser {
     }
 }
 
+
+pub struct CloudflareRadarParser;
+impl SourceParser for CloudflareRadarParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut asn_builder = Int64Builder::new();
+        let mut type_builder = StringBuilder::new();
+        let mut country_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<Value>(payload) {
+                // Cloudflare nests events under result -> events
+                if let Some(events) = val.get("result").and_then(|r| r.get("events")).and_then(|e| e.as_array()) {
+                    for event in events {
+                        asn_builder.append_option(event.get("asn").and_then(|v| v.as_i64()));
+                        type_builder.append_option(event.get("leak_type").and_then(|v| v.as_str()));
+                        country_builder.append_option(event.get("country_code").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("asn", DataType::Int64, true),
+            Field::new("leak_type", DataType::Utf8, true),
+            Field::new("country_code", DataType::Utf8, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(asn_builder.finish()),
+            Arc::new(type_builder.finish()),
+            Arc::new(country_builder.finish()),
+        ]).map_err(|e| format!("Failed to build Cloudflare Radar batch: {}", e))
+    }
+}
+
+
+pub struct NasaFirmsParser;
+impl SourceParser for NasaFirmsParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut lat_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut bright_builder = Float64Builder::new();
+        let mut conf_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<Value>(payload) {
+                // Assuming a JSON-wrapped FIRMS response for simplicity
+                if let Some(array) = val.as_array() {
+                    for item in array {
+                        lat_builder.append_option(item.get("latitude").and_then(|v| v.as_f64()));
+                        lon_builder.append_option(item.get("longitude").and_then(|v| v.as_f64()));
+                        bright_builder.append_option(item.get("bright_ti4").and_then(|v| v.as_f64()));
+                        conf_builder.append_option(item.get("confidence").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("brightness", DataType::Float64, true),
+            Field::new("confidence", DataType::Utf8, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(lat_builder.finish()),
+            Arc::new(lon_builder.finish()),
+            Arc::new(bright_builder.finish()),
+            Arc::new(conf_builder.finish()),
+        ]).map_err(|e| format!("Failed to build NASA FIRMS batch: {}", e))
+    }
+}
+
+
+pub struct UrlhausParser;
+impl SourceParser for UrlhausParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut id_builder = Int64Builder::new();
+        let mut url_builder = StringBuilder::new();
+        let mut status_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<Value>(payload) {
+                if let Some(urls) = val.get("urls").and_then(|u| u.as_array()) {
+                    for item in urls {
+                        // IDs sometimes come in as strings depending on the abuse.ch endpoint
+                        let id = item.get("id").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+                        id_builder.append_option(id);
+                        url_builder.append_option(item.get("url").and_then(|v| v.as_str()));
+                        status_builder.append_option(item.get("url_status").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("url", DataType::Utf8, true),
+            Field::new("status", DataType::Utf8, true),
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(id_builder.finish()),
+            Arc::new(url_builder.finish()),
+            Arc::new(status_builder.finish()),
+        ]).map_err(|e| format!("Failed to build URLhaus batch: {}", e))
+    }
+}
+
+
+pub struct FredParser;
+impl SourceParser for FredParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut date_builder = StringBuilder::new();
+        let mut value_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<Value>(payload) {
+                if let Some(obs) = json.get("observations").and_then(|o| o.as_array()) {
+                    for item in obs {
+                        date_builder.append_option(item.get("date").and_then(|v| v.as_str()));
+                        // FRED sometimes returns "." for missing data, so we safely parse it
+                        let val = item.get("value").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
+                        value_builder.append_option(val);
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("date", DataType::Utf8, true),
+            Field::new("value", DataType::Float64, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(date_builder.finish()), Arc::new(value_builder.finish())])
+            .map_err(|e| format!("Failed to build FRED batch: {}", e))
+    }
+}
+
+pub struct UcdpParser;
+impl SourceParser for UcdpParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut id_builder = Int64Builder::new();
+        let mut conflict_builder = StringBuilder::new();
+        let mut lat_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut deaths_builder = Int32Builder::new();
+
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<Value>(payload) {
+                if let Some(results) = json.get("Result").and_then(|r| r.as_array()) {
+                    for item in results {
+                        id_builder.append_option(item.get("id").and_then(|v| v.as_i64()));
+                        conflict_builder.append_option(item.get("conflict_name").and_then(|v| v.as_str()));
+                        lat_builder.append_option(item.get("latitude").and_then(|v| v.as_f64()));
+                        lon_builder.append_option(item.get("longitude").and_then(|v| v.as_f64()));
+                        deaths_builder.append_option(item.get("best").and_then(|v| v.as_i64().map(|d| d as i32)));
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("conflict_name", DataType::Utf8, true),
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("deaths", DataType::Int32, true),
+        ]));
+        RecordBatch::try_new(schema, vec![
+            Arc::new(id_builder.finish()), Arc::new(conflict_builder.finish()),
+            Arc::new(lat_builder.finish()), Arc::new(lon_builder.finish()), Arc::new(deaths_builder.finish()),
+        ]).map_err(|e| format!("Failed to build UCDP batch: {}", e))
+    }
+}
+
+pub struct OrefParser;
+impl SourceParser for OrefParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut id_builder = StringBuilder::new();
+        let mut title_builder = StringBuilder::new();
+        let mut cities_builder = StringBuilder::new(); // Flattened array of cities
+
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<Value>(payload) {
+                // OREF root is the object itself
+                id_builder.append_option(json.get("id").and_then(|v| v.as_str()));
+                title_builder.append_option(json.get("title").and_then(|v| v.as_str()));
+                
+                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                    let cities: Vec<&str> = data.iter().filter_map(|v| v.as_str()).collect();
+                    cities_builder.append_value(cities.join(", "));
+                } else {
+                    cities_builder.append_null();
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, true),
+            Field::new("title", DataType::Utf8, true),
+            Field::new("cities", DataType::Utf8, true),
+        ]));
+        RecordBatch::try_new(schema, vec![
+            Arc::new(id_builder.finish()), Arc::new(title_builder.finish()), Arc::new(cities_builder.finish())
+        ]).map_err(|e| format!("Failed to build OREF batch: {}", e))
+    }
+}
+
+pub struct CoinGeckoParser;
+impl SourceParser for CoinGeckoParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut coin_builder = StringBuilder::new();
+        let mut price_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<Value>(payload) {
+                if let Some(obj) = json.as_object() {
+                    for (coin, data) in obj {
+                        coin_builder.append_value(coin);
+                        price_builder.append_option(data.get("usd").and_then(|v| v.as_f64()));
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("coin", DataType::Utf8, true),
+            Field::new("price_usd", DataType::Float64, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(coin_builder.finish()), Arc::new(price_builder.finish())])
+            .map_err(|e| format!("Failed to build CoinGecko batch: {}", e))
+    }
+}
+
+pub struct OpenMeteoParser;
+impl SourceParser for OpenMeteoParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut lat_builder = Float64Builder::new();
+        let mut lon_builder = Float64Builder::new();
+        let mut temp_builder = Float64Builder::new();
+
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<Value>(payload) {
+                lat_builder.append_option(json.get("latitude").and_then(|v| v.as_f64()));
+                lon_builder.append_option(json.get("longitude").and_then(|v| v.as_f64()));
+                temp_builder.append_option(
+                    json.get("current_weather").and_then(|c| c.get("temperature")).and_then(|v| v.as_f64())
+                );
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("latitude", DataType::Float64, true),
+            Field::new("longitude", DataType::Float64, true),
+            Field::new("temperature", DataType::Float64, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(lat_builder.finish()), Arc::new(lon_builder.finish()), Arc::new(temp_builder.finish())])
+            .map_err(|e| format!("Failed to build OpenMeteo batch: {}", e))
+    }
+}

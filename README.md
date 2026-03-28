@@ -41,12 +41,34 @@ Run `panel serve demo.py`, then open http://localhost:5006/demo
  <img width="2281" height="1033" alt="floights" src="https://github.com/user-attachments/assets/36df86f2-30e7-4063-946c-d39fe296cf9b" />
 
 ## Supported Sources
-osintxpress can currently pull from - 
-- ACLED (https://acleddata.com/api/acled/read)
-- OpenSky (https://opensky-network.org/api/states/all)
-- GDELT GeoJSON (https://api.gdeltproject.org/api/v2/geo/geo?format=geojson)
-- Reutres (https://www.reutersagency.com/feed)
-- aisstream.io (wss://stream.aisstream.io/v0/stream)
+osintxpress can natively poll / stream from - 
+
+* **ACLED:** Armed Conflict Location & Event Data Project 
+* **UCDP:** Uppsala Conflict Data Program (Georeferenced events)
+* **GDELT:** Global Database of Events, Language, and Tone
+* **OREF:** Israel Home Front Command (Real-time rocket/drone alerts)
+
+* **Cloudflare Radar:** Global BGP leaks and route hijacks
+* **URLhaus (abuse.ch):** Active malware distribution URLs
+
+* **NASA FIRMS:** VIIRS Satellite thermal anomalies (Wildfires & kinetic impacts)
+* **NASA EONET:** Earth Observatory Natural Event Tracker
+* **USGS:** Global live earthquake feeds
+* **NWS:** US National Weather Service active alerts
+* **Open-Meteo:** Live global surface temperatures and weather
+
+* **Polymarket:** Decentralized prediction market odds and volume
+* **FRED:** Federal Reserve Economic Data (Macro indices)
+* **CoinGecko:** Real-time cryptocurrency prices
+* **Binance (WebSocket):** Live crypto trade execution streams
+
+* **OpenSky Network:** Live global ADS-B flight tracking
+* **AIS Stream (WebSocket):** Live global maritime shipping positions
+* **Telegram (MTProto):** Live, authenticated channel scraping via `grammers`
+
+* **Google News:** Accelerated proxy for Reuters World News
+* **BBC & Al Jazeera:** Breaking world news RSS feeds
+
 
 ## Suggestions
 Feel free to open a ticket or a discussion!

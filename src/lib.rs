@@ -54,6 +54,14 @@ pub fn sources() -> Vec<SourceAdapter> {
     let src_with_alt = |pt: ParserType, name: &str, url: &str, alts: &[&str]| SourceAdapter::new(pt, name, url, alts);
     vec![
         src_with_alt(
+            ParserType::Binance,   
+            "BINANCE",       
+            "wss://stream.binance.com:9443/ws/btcusdt@trade", 
+            &["wss://stream.binance.us:9443/ws/btcusdt@trade"]
+        ),
+        src(ParserType::AisStream,     "AIS_STREAM",    "wss://stream.aisstream.io/v0/stream"),
+
+        src_with_alt(
             ParserType::Acled,     
             "ACLED",         
             "https://acleddata.com/api/acled/read", 
@@ -72,14 +80,14 @@ pub fn sources() -> Vec<SourceAdapter> {
         src(ParserType::Nws,           "NWS",           "https://api.weather.gov/alerts/active"),
         src(ParserType::Bbc,           "BBC",           "http://feeds.bbci.co.uk/news/world/rss.xml"),
         src(ParserType::AlJazeera,     "AL_JAZEERA",    "https://www.aljazeera.com/xml/rss/all.xml"),
-        
-        src_with_alt(
-            ParserType::Binance,   
-            "BINANCE",       
-            "wss://stream.binance.com:9443/ws/btcusdt@trade", 
-            &["wss://stream.binance.us:9443/ws/btcusdt@trade"]
-        ),
-        src(ParserType::AisStream,     "AIS_STREAM",    "wss://stream.aisstream.io/v0/stream"),
+        src(ParserType::CloudflareRadar, "CLOUDFLARE_RADAR", "https://api.cloudflare.com/client/v4/radar/bgp/leaks/events"),
+        src(ParserType::NasaFirms,       "NASA_FIRMS",       "https://firms.modaps.eosdis.nasa.gov/api/country/csv/YOUR_KEY/VIIRS_SNPP_NRT/USA/1"),
+        src(ParserType::Urlhaus,         "URLHAUS",          "https://urlhaus-api.abuse.ch/v1/urls/recent/"),
+        src(ParserType::Fred,      "FRED",       "https://api.stlouisfed.org/fred/series/observations?series_id=BDI&file_type=json"),
+        src(ParserType::Ucdp,      "UCDP",       "https://ucdpapi.pcr.uu.se/api/gedevents/23.1?pagesize=100"),
+        src(ParserType::Oref,      "OREF",       "https://www.oref.org.il/WarningMessages/alert/alerts.json"),
+        src(ParserType::CoinGecko, "COINGECKO",  "https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin&vs_currencies=usd"),
+        src(ParserType::OpenMeteo, "OPEN_METEO", "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true"),
     ]
 }
 

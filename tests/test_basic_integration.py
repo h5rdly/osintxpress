@@ -101,6 +101,47 @@ class TestOsintEngineIntegration(unittest.TestCase):
                 {"title": "Will X happen?", "volume": 50000.0}
             ])
         )
+
+        cls.mock_server.add_rest_route(
+            path='/radar/bgp',
+            json_payload=json.dumps({"result": {"events": [{"asn": 13335, "leak_type": "hijack", "country_code": "US"}]}})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/firms/viirs',
+            json_payload=json.dumps([{"latitude": 34.5, "longitude": -118.2, "bright_ti4": 330.5, "confidence": "high"}])
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/urlhaus/recent',
+            json_payload=json.dumps({"urls": [{"id": 12345, "url": "http://bad.com/mal", "url_status": "online"}]})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/fred/obs',
+            json_payload=json.dumps({"observations": [{"date": "2023-01-01", "value": "1500.5"}]})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/ucdp/events',
+            json_payload=json.dumps({"Result": [{"id": 1, "conflict_name": "Test War", "latitude": 10.0, "longitude": 20.0, "best": 5}]})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/oref/alerts',
+            json_payload=json.dumps({"id": "123", "title": "Missile", "data": ["Tel Aviv", "Bat Yam"]})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/coingecko/price',
+            json_payload=json.dumps({"tether": {"usd": 1.00}, "bitcoin": {"usd": 65000.0}})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/meteo/current',
+            json_payload=json.dumps({"latitude": 52.52, "longitude": 13.41, "current_weather": {"temperature": 22.5}})
+        )
+
         cls.mock_server.start()
 
 
@@ -115,6 +156,11 @@ class TestOsintEngineIntegration(unittest.TestCase):
 
         engine = OsintEngine(worker_threads=2)
         base_url = self.mock_server.http_url
+
+        engine.add_ws_source(
+            url=f'{self.mock_server.ws_url}/ws/aisstream',
+            adapter=SourceAdapter.AIS_STREAM
+        )
 
         engine.add_rest_source(
             url=f'{base_url}/api/acled/read',
@@ -138,11 +184,6 @@ class TestOsintEngineIntegration(unittest.TestCase):
             url=f'{base_url}/rss/reuters',
             adapter=SourceAdapter.GOOGLE_NEWS_REUTERS,
             poll_interval_sec=1
-        )
-        
-        engine.add_ws_source(
-            url=f'{self.mock_server.ws_url}/ws/aisstream',
-            adapter=SourceAdapter.AIS_STREAM
         )
         
         engine.add_rest_source(
@@ -174,6 +215,30 @@ class TestOsintEngineIntegration(unittest.TestCase):
             poll_interval_sec=1
         )
 
+        engine.add_rest_source(
+            url=f'{base_url}/radar/bgp',
+            adapter=SourceAdapter.CLOUDFLARE_RADAR,
+            poll_interval_sec=1
+        )
+        
+        engine.add_rest_source(
+            url=f'{base_url}/firms/viirs',
+            adapter=SourceAdapter.NASA_FIRMS,
+            poll_interval_sec=1
+        )
+
+        engine.add_rest_source(
+            url=f'{base_url}/urlhaus/recent',
+            adapter=SourceAdapter.URLHAUS,
+            poll_interval_sec=1
+        )
+
+        engine.add_rest_source(url=f'{base_url}/fred/obs', adapter=SourceAdapter.FRED, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/ucdp/events', adapter=SourceAdapter.UCDP, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/oref/alerts', adapter=SourceAdapter.OREF, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/coingecko/price', adapter=SourceAdapter.COINGECKO, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/meteo/current', adapter=SourceAdapter.OPEN_METEO, poll_interval_sec=1)
+
         engine.start_all()
         time.sleep(1.5) 
         data = engine.poll()
@@ -191,6 +256,14 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert 'binance' in data
         assert 'nasa_eonet' in data
         assert 'polymarket' in data
+        assert 'cloudflare_radar' in data
+        assert 'nasa_firms' in data
+        assert 'urlhaus' in data
+        assert 'fred' in data
+        assert 'ucdp' in data
+        assert 'oref' in data
+        assert 'coingecko' in data
+        assert 'open_meteo' in data
 
         assert self.mock_server.get_request_count('/api/acled/read') >= 1
 
@@ -258,7 +331,72 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert poly_df['title'][0] == "Will X happen?"
         assert poly_df['volume'][0] == 50000.0
 
+        # Check Cloudflare
+        cf_df = pl.from_arrow(data['cloudflare_radar'])
+        assert len(cf_df) >= 1
+        assert cf_df['asn'][0] == 13335
+        assert cf_df['leak_type'][0] == 'hijack'
 
+        # Check FIRMS
+        firms_df = pl.from_arrow(data['nasa_firms'])
+        assert len(firms_df) >= 1
+        assert firms_df['brightness'][0] == 330.5
+        assert firms_df['confidence'][0] == 'high'
+
+        # Check URLhaus
+        urlhaus_df = pl.from_arrow(data['urlhaus'])
+        assert len(urlhaus_df) >= 1
+        assert urlhaus_df['id'][0] == 12345
+        assert urlhaus_df['status'][0] == 'online'
+
+        # Check FRED
+        fred_df = pl.from_arrow(data['fred'])
+        assert len(fred_df) >= 1
+        assert 'date' in fred_df.columns
+        assert fred_df['date'][0] == "2023-01-01"
+        assert fred_df['value'][0] == 1500.5
+
+        # Check UCDP
+        ucdp_df = pl.from_arrow(data['ucdp'])
+        assert len(ucdp_df) >= 1
+        assert 'conflict_name' in ucdp_df.columns
+        assert ucdp_df['id'][0] == 1
+        assert ucdp_df['conflict_name'][0] == "Test War"
+        assert ucdp_df['latitude'][0] == 10.0
+        assert ucdp_df['longitude'][0] == 20.0
+        assert ucdp_df['deaths'][0] == 5
+
+        # Check OREF
+        oref_df = pl.from_arrow(data['oref'])
+        assert len(oref_df) >= 1
+        assert 'cities' in oref_df.columns
+        assert oref_df['id'][0] == "123"
+        assert oref_df['title'][0] == "Missile"
+        assert oref_df['cities'][0] == "Tel Aviv, Bat Yam"
+
+        # Check CoinGecko
+        coingecko_df = pl.from_arrow(data['coingecko'])
+        assert len(coingecko_df) >= 2 # We mocked two coins: tether and bitcoin
+        assert 'price_usd' in coingecko_df.columns
+        
+        # Because JSON object key iteration order isn't guaranteed, we extract the list to check
+        coins = coingecko_df['coin'].to_list()
+        assert "bitcoin" in coins
+        assert "tether" in coins
+        
+        # Filter to Bitcoin and check its specific float value
+        btc_price = coingecko_df.filter(pl.col("coin") == "bitcoin")['price_usd'][0]
+        assert btc_price == 65000.0
+
+        # Check OpenMeteo
+        meteo_df = pl.from_arrow(data['open_meteo'])
+        assert len(meteo_df) >= 1
+        assert 'temperature' in meteo_df.columns
+        assert meteo_df['latitude'][0] == 52.52
+        assert meteo_df['longitude'][0] == 13.41
+        assert meteo_df['temperature'][0] == 22.5
+
+        
 if __name__ == '__main__':
 
     unittest.main(verbosity=2)
