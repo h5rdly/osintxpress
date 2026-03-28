@@ -1,7 +1,8 @@
-import json, sys, json, unittest
+import sys, json
+import unittest
 
 import polars as pl
-import pyarrow as pa
+import arro3.core as ac
 
 sys.path.append(__file__.replace('\\', '/').rsplit('/', 2)[0])
 from osintxpress import arrow_to_mlt, list_mlt_layers, mlt_to_geojson, mvt_to_geojson
@@ -10,7 +11,7 @@ from osintxpress import arrow_to_mlt, list_mlt_layers, mlt_to_geojson, mvt_to_ge
 class TestMltUtils(unittest.TestCase):
 
     def setUp(self):
-        # 1. Create a Polars DataFrame with standard and edge-case data
+
         self.df = pl.DataFrame({
             'latitude': [32.0853, 31.7683, None],  # Tel Aviv, Jerusalem, and a missing location
             'longitude': [34.7818, 35.2137, None],
@@ -18,13 +19,13 @@ class TestMltUtils(unittest.TestCase):
             'threat_level': [5, 3, 0]
         })
         
-        # 2. Convert to a PyArrow RecordBatch 
-        # (pyo3-arrow on the Rust side will seamlessly consume this via the C Data Interface)
-        self.batch = self.df.to_arrow().to_batches()[0]
+        table = ac.Table.from_arrow(self.df)
+        self.batch = table.to_batches()[0]
 
 
     def test_arrow_to_mlt_success(self):
-        '''Test that valid Arrow data cleanly compresses to MLT bytes.'''
+        ''' Test that valid Arrow data cleanly compresses to MLT bytes '''
+
         mlt_bytes = arrow_to_mlt('israel_cities', self.batch)
         
         self.assertIsInstance(mlt_bytes, bytes)
@@ -32,9 +33,11 @@ class TestMltUtils(unittest.TestCase):
 
 
     def test_arrow_to_mlt_custom_columns(self):
-        '''Test that the encoder handles custom coordinate column names.'''
+        ''' Test that the encoder handles custom coordinate column names '''
+
         custom_df = pl.DataFrame({'lat': [10.0], 'lon': [20.0], 'name': ['Test']})
-        custom_batch = custom_df.to_arrow().to_batches()[0]
+        custom_table = ac.Table.from_arrow(custom_df)
+        custom_batch = custom_table.to_batches()[0]
         
         # Should fail with default 'latitude/longitude' expectations
         with self.assertRaises(ValueError):
@@ -46,7 +49,8 @@ class TestMltUtils(unittest.TestCase):
 
 
     def test_list_mlt_layers(self):
-        '''Test that we can peek into an MLT tile and read its layer names without full decoding.'''
+        ''' Test that we can peek into an MLT tile and read its layer names without full decoding '''
+        
         mlt_bytes = arrow_to_mlt('tactical_layer', self.batch)
         
         layers = list_mlt_layers(mlt_bytes)
@@ -57,7 +61,8 @@ class TestMltUtils(unittest.TestCase):
 
 
     def test_mlt_roundtrip_to_geojson(self):
-        '''Test the full lifecycle: Arrow -> MLT -> GeoJSON and verify data integrity.'''
+        ''' Test the full lifecycle: Arrow -> MLT -> GeoJSON and verify data integrity '''
+        
         mlt_bytes = arrow_to_mlt('israel_cities', self.batch)
         geojson_str = mlt_to_geojson(mlt_bytes)
         
@@ -66,9 +71,9 @@ class TestMltUtils(unittest.TestCase):
         
         self.assertEqual(geo_dict.get('type'), 'FeatureCollection')
         self.assertIn('features', geo_dict)
-        
-        # We passed 3 rows, but 1 had null coordinates. 
-        # Our MltBridge explicitly skips null geometries, so we expect exactly 2 features.
+    
+        # We passed 3 rows, but 1 had null coordinates
+        # MltBridge explicitly skips null geometries, so we expect exactly 2 features
         features = geo_dict['features']
         self.assertEqual(len(features), 2, 'Should have skipped the row with null coordinates')
         
@@ -76,12 +81,14 @@ class TestMltUtils(unittest.TestCase):
         first_feature = features[0]
         self.assertEqual(first_feature['properties']['city'], 'Tel Aviv')
         self.assertEqual(first_feature['properties']['threat_level'], 5)
+
         # MLT internal layer tagging
         self.assertEqual(first_feature['properties']['_layer'], 'israel_cities') 
 
 
     def test_mlt_bad_data_handling(self):
-        '''Ensure the decoders gracefully catch garbage bytes and raise Python ValueErrors.'''
+        ''' Ensure the decoders gracefully catch garbage bytes and raise Python ValueErrors '''
+        
         bad_bytes = b'this is definitely not a valid compressed maplibre tile'
         
         with self.assertRaises(ValueError) as context:
@@ -93,7 +100,8 @@ class TestMltUtils(unittest.TestCase):
 
 
     def test_mvt_bad_data_handling(self):
-        '''Ensure the MVT decoder catches bad Protobuf data safely.'''
+        ''' Ensure the MVT decoder catches bad Protobuf data safely '''
+
         bad_bytes = b'not a protobuf'
         
         with self.assertRaises(ValueError) as context:
