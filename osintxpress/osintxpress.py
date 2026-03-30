@@ -71,19 +71,23 @@ for source in _builtins:
     setattr(SourceAdapter, source.name, source)
 
 
-def login_telegram(api_id: int, api_hash: str, phone: str, session_path: str = "osint.session"):
+def login_telegram(api_id: int, api_hash: str, phone: str, session_path: str = "osint.session", code_callback=None):
     ''' Interactively generate a Telegram session file '''
     
-    print(f"Connecting to Telegram for {phone}...")
+    # If no callback is provided (like in a terminal script), use the standard input() prompt
+    if code_callback is None:
+        print(f"Connecting to Telegram for {phone}...")
+        def default_get_code():
+            return input(f"\n[!] Enter the 5-digit code Telegram sent to {phone}: ")
+        code_callback = default_get_code
     
-    def get_code_from_user():
-        return input(f"\n[!] Enter the 5-digit code Telegram sent to {phone}: ")
+    # Call the Rust backend with whichever callback we are using
+    _rust_lib.login_telegram(api_id, api_hash, phone, session_path, code_callback)
     
-    # Call the Rust backend
-    _rust_lib.login_telegram(api_id, api_hash, phone, session_path, get_code_from_user)
-    
-    print(f"Telegram session saved to: {session_path}")
-    print("You can now pass this session file path to engine.add_telegram_source()")
+    # Only print this if we are running in the terminal mode
+    if code_callback.__name__ == 'default_get_code':
+        print(f"Telegram session saved to: {session_path}")
+        print("You can now pass this session file path to engine.add_telegram_source()")
 
 
 def supported_sources() -> list[str]:

@@ -6,7 +6,7 @@ use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyBytes, PyAny};
+use pyo3::types::{PyBytes, PyAny};
 use pyo3_arrow::PyRecordBatch; 
 
 mod engine;
@@ -14,16 +14,14 @@ mod mock_server;
 mod client;
 mod parser;
 mod runner;
-mod mlt_encoder;
+mod mlt;
 
 use engine::Engine;
 use parser::ParserType;
 
-
 #[pyclass(frozen, eq, from_py_object)]
 #[derive(Clone, PartialEq, Debug)]
 pub struct SourceAdapter {
-
     pub parser_type: ParserType,
     #[pyo3(get)]
     pub name: String,
@@ -32,7 +30,6 @@ pub struct SourceAdapter {
     #[pyo3(get)]
     pub alternate_urls: Vec<String>,
 }
-
 
 impl SourceAdapter {
     pub fn new(pt: ParserType, name: &str, url: &str, alternates: &[&str]) -> Self {
@@ -45,10 +42,8 @@ impl SourceAdapter {
     }
 }
 
-
 #[pyfunction]
 pub fn sources() -> Vec<SourceAdapter> {
-
     let src = |pt: ParserType, name: &str, url: &str| SourceAdapter::new(pt, name, url, &[]);
     let src_with_alt = |pt: ParserType, name: &str, url: &str, alts: &[&str]| SourceAdapter::new(pt, name, url, alts);
     vec![
@@ -59,7 +54,6 @@ pub fn sources() -> Vec<SourceAdapter> {
             &["wss://stream.binance.us:9443/ws/btcusdt@trade"]
         ),
         src(ParserType::AisStream,     "AIS_STREAM",    "wss://stream.aisstream.io/v0/stream"),
-
         src_with_alt(
             ParserType::Acled,     
             "ACLED",         
@@ -90,12 +84,11 @@ pub fn sources() -> Vec<SourceAdapter> {
     ]
 }
 
-
-
 #[pyclass]
 pub struct OsintEngine {
     engine: Engine,
     http_client: Arc<dyn client::HttpClient>, 
+    is_running: bool,
 }
 
 
@@ -107,6 +100,7 @@ impl OsintEngine {
         Self {
             engine: Engine::new(worker_threads),
             http_client: Arc::new(client::WreqClient::new()),
+            is_running: false,
         }
     }
 
@@ -118,25 +112,31 @@ impl OsintEngine {
         self.engine.stop_source(name);
     }
 
-    fn start_all(&self) {
+    fn start_all(&mut self) {
         self.engine.start_all();
+        self.is_running = true;
     }
 
-    fn stop_all(&self) {
+    fn stop_all(&mut self) {
         self.engine.stop_all();
+        self.is_running = false;
+    }
+
+    pub fn poll(&self) -> std::collections::HashMap<String, pyo3_arrow::PyRecordBatch> {
+        let mut py_dict = std::collections::HashMap::new();
+        for (source_name, batch) in self.engine.poll_data() {
+            py_dict.insert(source_name, pyo3_arrow::PyRecordBatch::new(batch));
+        }
+        py_dict
     }
 
     #[pyo3(signature = (adapter, name=None, url=None, poll_interval_sec=60, headers=None))]
     fn add_rest_source(
-        &self,
-        adapter: SourceAdapter,
-        name: Option<&str>, 
-        url: Option<&str>,
-        poll_interval_sec: u64,
-        headers: Option<HashMap<String, String>>,
+        &self, adapter: SourceAdapter, name: Option<&str>, url: Option<&str>,
+        poll_interval_sec: u64, headers: Option<HashMap<String, String>>,
     ) -> PyResult<()> {
-
-        let url = url.map(|s| s.to_string()).unwrap_or_else(|| adapter.default_url.to_string());        let parser = parser::get_parser(adapter.parser_type); 
+        let url = url.map(|s| s.to_string()).unwrap_or_else(|| adapter.default_url.to_string());        
+        let parser = parser::get_parser(adapter.parser_type); 
         let source_name = name.map(|s| s.to_string()).unwrap_or_else(|| adapter.name.to_lowercase());
 
         let runner = Box::new(runner::RestRunner { 
@@ -145,68 +145,50 @@ impl OsintEngine {
             client: self.http_client.clone() 
         });
 
-        self.engine.add_source(source_name, url, runner, parser);
+        self.engine.add_source(source_name.clone(), url, runner, parser);
+        
+        if self.is_running {
+            let _ = self.engine.start_source(&source_name);
+        }
         Ok(())
     }
 
-
     #[pyo3(signature = (adapter, name=None, url=None, init_message=None))]
     fn add_ws_source(
-        &self,
-        adapter: SourceAdapter,
-        name: Option<&str>, 
-        url: Option<&str>,
-        init_message: Option<String>,
+        &self, adapter: SourceAdapter, name: Option<&str>, url: Option<&str>, init_message: Option<String>,
     ) -> PyResult<()> {
-
         let url = url.map(|s| s.to_string()).unwrap_or_else(|| adapter.default_url.to_string());
         let parser = parser::get_parser(adapter.parser_type); 
         let source_name = name.map(|s| s.to_string()).unwrap_or_else(|| adapter.name.to_lowercase());
 
         let runner = Box::new(runner::WsRunner { init_message });
 
-        self.engine.add_source(source_name, url, runner, parser);
-        Ok(())
-    }
-
-
-    #[pyo3(signature = (target_channel, tg_api_id, tg_session_path=None, name=None))]
-    fn add_telegram_source(
-        &self,
-        target_channel: &str,
-        tg_api_id: i32,
-        tg_session_path: Option<String>,
-        name: Option<&str>, 
-    ) -> PyResult<()> {
-
-        let parser = parser::get_parser(parser::ParserType::Telegram);
-        let source_name = name.map(|s| s.to_string()).unwrap_or_else(|| "telegram".to_string());
-
-        let runner = Box::new(runner::TelegramRunner {
-            api_id: tg_api_id,
-            session_path: tg_session_path.unwrap_or_else(|| "osint.session".to_string()),
-        });
+        self.engine.add_source(source_name.clone(), url, runner, parser);
         
-        self.engine.add_source(source_name, target_channel.to_string(), runner, parser);
+        if self.is_running {
+            let _ = self.engine.start_source(&source_name);
+        }
         Ok(())
     }
 
+    #[pyo3(signature = (name, target_channel, tg_api_id, tg_api_hash, tg_session_path))]
+    pub fn add_telegram_source(&mut self, name: &str, target_channel: &str, tg_api_id: i32, tg_api_hash: &str, tg_session_path: &str) {
+        let parser = crate::parser::get_parser(crate::parser::ParserType::Telegram);
+        self.engine.add_telegram_source(
+            target_channel.to_string(),
+            tg_api_id,
+            tg_api_hash.to_string(),
+            tg_session_path.to_string(),
+            name.to_string(),
+            parser
+        );
+    }
 
-    fn poll<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-
-        let raw_batches = py.detach(|| self.engine.poll_data());
-
-        let dict = PyDict::new(py);
-        for (name, batch) in raw_batches {
-            dict.set_item(name, PyRecordBatch::new(batch).to_arro3(py)?)?;
-        }
-
-        Ok(dict)
+    #[pyo3(signature = (target_channel, limit=5))]
+    pub fn fetch_telegram_history(&self, target_channel: &str, limit: usize) {
+        self.engine.fetch_telegram_history(target_channel.to_string(), limit);
     }
 }
-
-
-// -- Some utility / helper functions
 
 #[pyfunction]
 #[pyo3(signature = (api_id, api_hash, phone, session_path, code_callback))]
@@ -217,51 +199,51 @@ fn login_telegram<'py>(
     session_path: &str, 
     code_callback: Bound<'py, PyAny> 
 ) -> PyResult<()> {
-
-    // A temporary single-threaded runtime for the login, to avoid passing python objects to threads
     let rt = tokio::runtime::Runtime::new().unwrap();
     
     rt.block_on(async {
         let session = Arc::new(SqliteSession::open(session_path).await.unwrap());
-        let pool = SenderPool::new(Arc::clone(&session), api_id);
-        let tg_client = TgClient::new(pool.handle);
-        let _task = tokio::spawn(pool.runner.run());
+        let SenderPool { runner, handle, .. } = SenderPool::new(Arc::clone(&session), api_id);
+        let tg_client = TgClient::new(handle);
+        let _task = tokio::spawn(runner.run());
 
-        let token = tg_client.request_login_code(phone, api_hash).await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let token = match tg_client.request_login_code(phone, api_hash).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Telegram API Error (request_login_code): {}", e);
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));
+            }
+        };
 
-        // On the main thread, we don't need `with_gil` or `allow_threads`
         let code: String = code_callback.call0()?.extract()?;
 
-        tg_client.sign_in(&token, &code).await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        if let Err(e) = tg_client.sign_in(&token, &code).await {
+            tracing::error!("Telegram API Error (sign_in): {}", e);
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));
+        }
             
+        tracing::info!("Successfully authenticated MTProto session for {}", phone);
         Ok(())
     })
 }
 
 
+// -- Aux MLT conversion methods
+
 #[pyfunction]
 #[pyo3(signature = (layer_name, batch, lat_col="latitude", lon_col="longitude"))]
 fn arrow_to_mlt<'py>(
-    py: Python<'py>,
-    layer_name: &str,
-    batch: PyRecordBatch,
-    lat_col: &str,
-    lon_col: &str,
+    py: Python<'py>, layer_name: &str, batch: PyRecordBatch, lat_col: &str, lon_col: &str,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let arrow_batch = batch.into_inner();
-    
-    match mlt_encoder::MltBridge::encode_from_arrow(layer_name, &arrow_batch, lat_col, lon_col) {
+    match mlt::MltBridge::encode_from_arrow(layer_name, &arrow_batch, lat_col, lon_col) {
         Ok(mlt_bytes) => Ok(PyBytes::new(py, &mlt_bytes)),
         Err(e) => Err(pyo3::exceptions::PyValueError::new_err(e)),
     }
 }
 
-
 #[pyfunction]
 fn list_mlt_layers(mlt_bytes: &[u8]) -> PyResult<Vec<String>> {
-
     let layers = mlt_core::Parser::default().parse_layers(mlt_bytes)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MLT Parse error: {}", e)))?;
         
@@ -270,10 +252,8 @@ fn list_mlt_layers(mlt_bytes: &[u8]) -> PyResult<Vec<String>> {
         .collect())
 }
 
-
 #[pyfunction]
 fn mvt_to_geojson(mvt_bytes: &[u8]) -> PyResult<String> {
-
     let fc = mlt_core::mvt::mvt_to_feature_collection(mvt_bytes.to_vec())
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MVT Parse error: {}", e)))?;
         
@@ -281,23 +261,36 @@ fn mvt_to_geojson(mvt_bytes: &[u8]) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON Serialization error: {}", e)))
 }
 
-
 #[pyfunction]
 fn mlt_to_geojson(mlt_bytes: &[u8]) -> PyResult<String> {
     let mut parser = mlt_core::Parser::default();
-    
-    // Parse the layers, but keep them mutable
     let mut layers = parser.parse_layers(mlt_bytes)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MLT Parse error: {}", e)))?;
         
     let mut decoder = mlt_core::Decoder::default();
-        
-    // Pass the mutable layers and decoder directly
     let fc = mlt_core::geojson::FeatureCollection::from_layers(&mut layers, &mut decoder)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("GeoJSON error: {}", e)))?;
 
     serde_json::to_string(&fc)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON Serialization error: {}", e)))
+}
+
+
+#[pyfunction]
+fn mlt_to_dict<'py>(py: Python<'py>, mlt_bytes: &[u8]) -> PyResult<Bound<'py, PyAny>> {
+    
+    let mut parser = mlt_core::Parser::default();
+    let mut layers = parser.parse_layers(mlt_bytes)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("MLT Parse error: {}", e)))?;
+        
+    let mut decoder = mlt_core::Decoder::default();
+    let fc = mlt_core::geojson::FeatureCollection::from_layers(&mut layers, &mut decoder)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("GeoJSON error: {}", e)))?;
+
+    let py_dict = pythonize::pythonize(py, &fc)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Pythonize error: {}", e)))?;
+        
+    Ok(py_dict)
 }
 
 
@@ -316,6 +309,9 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(list_mlt_layers, m)?)?;
     m.add_function(wrap_pyfunction!(mvt_to_geojson, m)?)?;
     m.add_function(wrap_pyfunction!(mlt_to_geojson, m)?)?;
+    m.add_function(wrap_pyfunction!(mlt_to_dict, m)?)?; 
+
+    m.add("ENGINE_BUFFER_SIZE", engine::ENGINE_BUFFER_SIZE)?;
 
     Ok(())
 }

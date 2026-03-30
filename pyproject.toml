@@ -17,10 +17,16 @@ dependencies = [
 [dependency-groups]
 test = ["polars >= 1.39.2"]
 dashboard = [
-    "polars >= 1.39.2",
+    "polars >= 1.39.3",
     "geoarrow-rust-core >= 0.6.1",
+
     "panel >= 1.8.10",
     "lonboard >= 0.15.0",
+
+    "maplibre >= 0.3.6", 
+    "anywidget >= 0.9.21",
+    "traitlets >= 5.14.3",
+    "shiny >= 1.6.0"
 ]
 
 [tool.maturin]

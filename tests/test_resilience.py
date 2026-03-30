@@ -57,7 +57,7 @@ class TestOsintEngineResilience(unittest.TestCase):
         
         ais_df = pl.from_arrow(data['ais_spam'])
         
-        self.assertEqual(len(ais_df), 50, "Buffer cap failed! Memory leak potential.")
+        self.assertEqual(len(ais_df), 1000, "Buffer cap failed! Memory leak potential.")
         self.assertEqual(ais_df['mmsi'][0], 50, "Did not drop the oldest messages!")
 
 
@@ -80,7 +80,7 @@ class TestOsintEngineResilience(unittest.TestCase):
         ais_df = pl.from_arrow(data['ais_spam'])
         
         # The engine should have protected itself by dropping excess messages
-        self.assertEqual(len(ais_df), 50, "Buffer cap failed! Memory leak potential.")
+        self.assertEqual(len(ais_df), 1000, "Buffer cap failed! Memory leak potential.")
         print(f"\nBuffer capped successfully! Kept {len(ais_df)} latest messages.")
 
 

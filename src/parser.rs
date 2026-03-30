@@ -78,78 +78,6 @@ pub trait SourceParser: Send + Sync {
 }
 
 
-pub struct RssParser;
-impl SourceParser for RssParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut title_builder = StringBuilder::new();
-        let mut link_builder = StringBuilder::new();
-
-        for payload in payloads {
-            let mut reader = Reader::from_str(payload);
-            reader.config_mut().trim_text(true);
-
-            let mut buf = Vec::new();
-            let mut in_item = false;
-            let mut current_tag = String::new();
-            
-            let mut temp_title = String::new();
-            let mut temp_link = String::new();
-
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Start(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                        if tag_name == "item" {
-                            in_item = true;
-                            temp_title.clear();
-                            temp_link.clear();
-                        }
-                        current_tag = tag_name;
-                    }
-                    Ok(Event::Text(e)) => {
-                        if in_item {
-                            if let Ok(text) = e.unescape() {
-                                if current_tag == "title" {
-                                    temp_title.push_str(&text);
-                                } else if current_tag == "link" {
-                                    temp_link.push_str(&text);
-                                }
-                            }
-                        }
-                    }
-                    Ok(Event::End(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                        if tag_name == "item" {
-                            in_item = false;
-                            title_builder.append_value(&temp_title);
-                            link_builder.append_value(&temp_link);
-                        }
-                        current_tag.clear();
-                    }
-                    Ok(Event::Eof) => break,
-                    Err(e) => {
-                        tracing::error!("XML parsing error: {:?}", e);
-                        break;
-                    }
-                    _ => (),
-                }
-                buf.clear();
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("title", DataType::Utf8, true),
-            Field::new("link", DataType::Utf8, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(title_builder.finish()),
-            Arc::new(link_builder.finish()),
-        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
-    }
-}
-
-
 pub struct AisStreamParser;
 impl SourceParser for AisStreamParser {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
@@ -529,43 +457,6 @@ impl SourceParser for PolymarketParser {
 }
 
 
-pub struct TelegramParser;
-impl SourceParser for TelegramParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = Int64Builder::new();
-        let mut channel_builder = StringBuilder::new();
-        let mut text_builder = StringBuilder::new();
-        let mut date_builder = Int64Builder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                id_builder.append_option(val.get("message_id").and_then(|v| v.as_i64()));
-                channel_builder.append_option(val.get("channel").and_then(|v| v.as_str()));
-                text_builder.append_option(val.get("text").and_then(|v| v.as_str()));
-                date_builder.append_option(val.get("date").and_then(|v| v.as_i64()));
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("message_id", DataType::Int64, true),
-            Field::new("channel", DataType::Utf8, true),
-            Field::new("text", DataType::Utf8, true),
-            Field::new("date", DataType::Int64, true),
-        ]));
-
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(id_builder.finish()),
-                Arc::new(channel_builder.finish()),
-                Arc::new(text_builder.finish()),
-                Arc::new(date_builder.finish()),
-            ],
-        ).map_err(|e| format!("Failed to build Telegram batch: {}", e))
-    }
-}
-
-
 pub struct CloudflareRadarParser;
 impl SourceParser for CloudflareRadarParser {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
@@ -819,5 +710,163 @@ impl SourceParser for OpenMeteoParser {
         ]));
         RecordBatch::try_new(schema, vec![Arc::new(lat_builder.finish()), Arc::new(lon_builder.finish()), Arc::new(temp_builder.finish())])
             .map_err(|e| format!("Failed to build OpenMeteo batch: {}", e))
+    }
+}
+
+// -- Telegram
+
+pub struct TelegramParser;
+impl SourceParser for TelegramParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut id_builder = Int64Builder::new();
+        let mut channel_builder = StringBuilder::new();
+        let mut text_builder = StringBuilder::new();
+        let mut date_builder = Int64Builder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                id_builder.append_option(val.get("message_id").and_then(|v| v.as_i64()));
+                channel_builder.append_option(val.get("channel").and_then(|v| v.as_str()));
+                text_builder.append_option(val.get("text").and_then(|v| v.as_str()));
+                date_builder.append_option(val.get("date").and_then(|v| v.as_i64()));
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("message_id", DataType::Int64, true),
+            Field::new("channel", DataType::Utf8, true),
+            Field::new("text", DataType::Utf8, true),
+            Field::new("date", DataType::Int64, true),
+        ]));
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_builder.finish()),
+                Arc::new(channel_builder.finish()),
+                Arc::new(text_builder.finish()),
+                Arc::new(date_builder.finish()),
+            ],
+        ).map_err(|e| format!("Failed to build Telegram batch: {}", e))
+    }
+}
+
+
+// -- RSS
+
+pub struct RssParser;
+impl SourceParser for RssParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut title_builder = StringBuilder::new();
+        let mut link_builder = StringBuilder::new();
+        let mut pubdate_builder = StringBuilder::new();
+        let mut desc_builder = StringBuilder::new();
+        
+        let mut meta_builder = StringBuilder::new(); 
+
+        for payload in payloads {
+            let mut reader = Reader::from_str(payload);
+            reader.config_mut().trim_text(true);
+
+            let mut buf = Vec::new();
+            let mut in_item = false;
+            let mut current_tag = String::new();
+            
+            let mut temp_title = String::new();
+            let mut temp_link = String::new();
+            let mut temp_pubdate = String::new();
+            let mut temp_desc = String::new();
+            
+            // A temporary JSON map to hold all the unknown tags
+            let mut temp_meta = serde_json::Map::new();
+
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) => {
+                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                        if tag_name == "item" {
+                            in_item = true;
+                            temp_title.clear();
+                            temp_link.clear();
+                            temp_pubdate.clear();
+                            temp_desc.clear();
+                            temp_meta.clear(); 
+                        }
+                        current_tag = tag_name;
+                    }
+                    Ok(Event::Text(e)) => {
+                        if in_item {
+                            if let Ok(text) = e.unescape() {
+                                let text_str = text.to_string();
+                                match current_tag.as_str() {
+                                    "title" => temp_title.push_str(&text_str),
+                                    "link" => temp_link.push_str(&text_str),
+                                    "pubdate" => temp_pubdate.push_str(&text_str),
+                                    "description" => temp_desc.push_str(&text_str),
+                                    _ if !current_tag.is_empty() => {
+                                        // Save any unknown tag into the JSON map
+                                        temp_meta.insert(current_tag.clone(), serde_json::Value::String(text_str));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::CData(e)) => {
+                        if in_item {
+                            let text_str = String::from_utf8_lossy(e.as_ref()).to_string();
+                            match current_tag.as_str() {
+                                "title" => temp_title.push_str(&text_str),
+                                "link" => temp_link.push_str(&text_str),
+                                "pubdate" => temp_pubdate.push_str(&text_str),
+                                "description" => temp_desc.push_str(&text_str),
+                                _ if !current_tag.is_empty() => {
+                                    // Catch-all for CDATA blocks
+                                    temp_meta.insert(current_tag.clone(), serde_json::Value::String(text_str));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Ok(Event::End(ref e)) => {
+                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                        if tag_name == "item" {
+                            in_item = false;
+                            title_builder.append_value(temp_title.trim());
+                            link_builder.append_value(temp_link.trim());
+                            pubdate_builder.append_value(temp_pubdate.trim());
+                            desc_builder.append_value(temp_desc.trim());
+                            
+                            let meta_json = serde_json::to_string(&temp_meta).unwrap_or_else(|_| "{}".to_string());
+                            meta_builder.append_value(meta_json);
+                        }
+                        current_tag.clear();
+                    }
+                    Ok(Event::Eof) => break,
+                    Err(e) => {
+                        tracing::error!("XML parsing error: {:?}", e);
+                        break;
+                    }
+                    _ => (),
+                }
+                buf.clear();
+            }
+        }
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("title", DataType::Utf8, true),
+            Field::new("link", DataType::Utf8, true),
+            Field::new("pubDate", DataType::Utf8, true),
+            Field::new("description", DataType::Utf8, true),
+            Field::new("metadata", DataType::Utf8, true), 
+        ]));
+
+        RecordBatch::try_new(schema, vec![
+            Arc::new(title_builder.finish()),
+            Arc::new(link_builder.finish()),
+            Arc::new(pubdate_builder.finish()),
+            Arc::new(desc_builder.finish()),
+            Arc::new(meta_builder.finish()), 
+        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
     }
 }

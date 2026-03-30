@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tokio::task::JoinHandle;
+use tokio::sync::mpsc; 
 
 use futures_util::StreamExt; 
 
-use grammers_client::{Client as TgClient, update::Update};
+use grammers_client::{Client as TgClient, client::UpdatesConfiguration, update::Update};
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
+use grammers_session::types::PeerId;
 
 use crate::client::HttpClient;
 
@@ -21,6 +23,7 @@ pub trait ConnectionRunner: Send + Sync {
         max_buffer_size: usize,
     ) -> JoinHandle<()>;
 }
+
 
 pub struct RestRunner {
     pub interval_sec: u64,
@@ -52,6 +55,10 @@ impl ConnectionRunner for RestRunner {
                     Ok(bytes) => {
                         consecutive_errors = 0;
                         if let Ok(text) = String::from_utf8(bytes) {
+                            // Activate then investigating RSS feeds
+                            // if source_name == "google_news_reuters" {
+                            //     tracing::info!("RAW RSS DUMP:\n{}", text);
+                            // }
                             let mut guard = buffer.lock().unwrap();
                             let queue = guard.entry(source_name.clone()).or_insert_with(Vec::new);
                             
@@ -60,7 +67,7 @@ impl ConnectionRunner for RestRunner {
                             if queue.len() > max_buffer_size {
                                 let excess = queue.len() - max_buffer_size;
                                 queue.drain(0..excess);
-                                tracing::warn!("Buffer capped for {}. Python polling is too slow!", source_name);
+                                tracing::warn!("Buffer capped for {}. Python `ing is too slow!", source_name);
                             }
                         }
                     }
@@ -152,76 +159,134 @@ impl ConnectionRunner for WsRunner {
 }
 
 
-pub struct TelegramRunner {
-    pub api_id: i32,
-    pub session_path: String,
+#[derive(Debug)]
+pub enum TgCommand {
+    FetchHistory { target_channel: String, limit: usize },
 }
 
-impl ConnectionRunner for TelegramRunner {
-    fn spawn(
-        &self,
-        source_name: String,
-        target_url: String, 
+pub struct TelegramMultiplexer {
+    pub api_id: i32,
+    pub session_path: String,
+    pub channels: Vec<(String, String)>, 
+}
+
+impl TelegramMultiplexer {
+    pub fn spawn(
+        self,
         buffer: Arc<Mutex<HashMap<String, Vec<String>>>>,
         max_buffer_size: usize,
+        mut cmd_rx: mpsc::Receiver<TgCommand>,
     ) -> JoinHandle<()> {
-        let api_id = self.api_id;
-        let session_path = self.session_path.clone();
-
         tokio::spawn(async move {
-            tracing::info!("Connecting to Telegram MTProto for {}...", source_name);
-
-            let session = Arc::new(SqliteSession::open(&session_path).await.unwrap());
-            let pool = SenderPool::new(Arc::clone(&session), api_id);
-            let tg_client = TgClient::new(pool.handle);
-            tokio::spawn(pool.runner.run());
-
-            // Enforce that the session file exists and is authorized
-            if !tg_client.is_authorized().await.unwrap_or(false) {
-                tracing::error!("Telegram session {} is not authorized! You must run a local login script first to generate the session file.", session_path);
-                return;
-            }
-
-            let target_peer = match tg_client.resolve_username(&target_url).await {
-                Ok(Some(peer)) => peer,
-                Ok(None) => {
-                    tracing::error!("Telegram channel @{} not found!", target_url);
-                    return;
-                }
+            
+            let session = match SqliteSession::open(&self.session_path).await {
+                Ok(s) => Arc::new(s),
                 Err(e) => {
-                    tracing::error!("Error resolving @{}: {}", target_url, e);
+                    tracing::error!("Failed to open Telegram session: {}", e);
                     return;
                 }
             };
-            let target_id = target_peer.id();
 
-            let mut updates = tg_client.stream_updates(pool.updates, Default::default()).await;
-            tracing::info!("Listening for live OSINT on Telegram channel: @{}", target_url);
+            let SenderPool { runner, updates, handle } = SenderPool::new(Arc::clone(&session), self.api_id);
+            let client = TgClient::new(handle);
+            let _task = tokio::spawn(runner.run());
 
-            while let Ok(update) = updates.next().await {
-                if let Update::NewMessage(message) = update {
-                    if message.peer().map(|p| p.id()) == Some(target_id) {
-                        
-                        let json_msg = serde_json::json!({
-                            "message_id": message.id(),
-                            "channel": target_url,
-                            "text": message.text(),
-                            "date": message.date().timestamp()
-                        });
+            if !client.is_authorized().await.unwrap_or(false) {
+                tracing::error!("Telegram session '{}' is not authorized! Please log in via the UI.", self.session_path);
+                return;
+            }
 
-                        let mut guard = buffer.lock().unwrap();
-                        let queue = guard.entry(source_name.clone()).or_insert_with(Vec::new);
-                        
-                        queue.push(json_msg.to_string());
+            let mut chat_map: HashMap<PeerId, (String, String)> = HashMap::new();
 
-                        if queue.len() > max_buffer_size {
-                            let excess = queue.len() - max_buffer_size;
-                            queue.drain(0..excess);
+            for (name, target) in &self.channels {
+                match client.resolve_username(target).await {
+                    Ok(Some(chat)) => {
+                        chat_map.insert(chat.id(), (name.clone(), target.clone()));
+                        tracing::info!("Successfully resolved Telegram channel: @{}", target);
+                    }
+                    Ok(None) => tracing::warn!("Could not find Telegram channel: @{}", target),
+                    Err(e) => tracing::error!("Error resolving Telegram channel @{}: {}", target, e),
+                }
+            }
+
+            tracing::info!("Telegram multiplexer live. Listening to {} channels...", chat_map.len());
+
+            let mut update_stream = client.stream_updates(updates, UpdatesConfiguration {
+                catch_up: true,
+                ..Default::default()
+            }).await;
+
+            loop {
+                tokio::select! {
+                    // --- LIVE MESSAGES ---
+                    update_res = update_stream.next() => {
+                        match update_res {
+                            Ok(Update::NewMessage(msg)) if !msg.outgoing() => {
+                                // 0.9.0: Use peer_id()
+                                if let Some((source_name, target_channel)) = chat_map.get(&msg.peer_id()) {
+                                    let text = msg.text().replace("\"", "\\\"").replace("\n", "\\n");
+                                    let payload = format!(
+                                        r#"{{"channel": "{}", "text": "{}", "date": {}}}"#,
+                                        target_channel, text, msg.date().timestamp()
+                                    );
+                                    let mut bg = buffer.lock().unwrap();
+                                    let q = bg.entry(source_name.clone()).or_default();
+                                    if q.len() < max_buffer_size {
+                                        q.push(payload);
+                                    }
+                                }
+                            }
+                            Ok(_) => {} 
+                            Err(e) => {
+                                tracing::error!("Telegram update error: {}", e);
+                                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            }
+                        }
+                    }
+
+                    // --- HISTORY COMMANDS ---
+                    Some(cmd) = cmd_rx.recv() => {
+                        match cmd {
+                            TgCommand::FetchHistory { target_channel, limit } => {
+                                tracing::info!("Fetching {} historical messages from @{}", limit, target_channel);
+                                
+                                let client_clone = client.clone();
+                                let buffer_clone = buffer.clone();
+                                let source_name = format!("tg_{}", target_channel);
+                                
+                                tokio::spawn(async move {
+                                    match client_clone.resolve_username(&target_channel).await {
+                                        Ok(Some(chat)) => {
+                                            // 0.9.0: Extract the PeerRef before iterating!
+                                            if let Some(peer_ref) = chat.to_ref().await {
+                                                let mut iter = client_clone.iter_messages(peer_ref);
+                                                let mut count = 0;
+                                                
+                                                while let Ok(Some(msg)) = iter.next().await {
+                                                    if count >= limit { break; }
+                                                    let text = msg.text().replace("\"", "\\\"").replace("\n", "\\n");
+                                                    let payload = format!(
+                                                        r#"{{"channel": "{}", "text": "{}", "date": {}}}"#,
+                                                        target_channel, text, msg.date().timestamp()
+                                                    );
+                                                    let mut bg = buffer_clone.lock().unwrap();
+                                                    let q = bg.entry(source_name.clone()).or_default();
+                                                    if q.len() < max_buffer_size {
+                                                        q.push(payload);
+                                                    }
+                                                    count += 1;
+                                                }
+                                                tracing::info!("History fetch complete for @{} ({} messages)", target_channel, count);
+                                            }
+                                        }
+                                        _ => tracing::error!("Failed to resolve @{} for history fetch", target_channel),
+                                    }
+                                });
+                            }
                         }
                     }
                 }
             }
-            tracing::warn!("Telegram updates stream dropped for {}", source_name);
         })
     }
 }
