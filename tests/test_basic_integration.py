@@ -142,6 +142,20 @@ class TestOsintEngineIntegration(unittest.TestCase):
             json_payload=json.dumps({"latitude": 52.52, "longitude": 13.41, "current_weather": {"temperature": 22.5}})
         )
 
+        cls.mock_server.add_rest_route(
+            path='/feodo/ipblocklist.json', 
+            json_payload=json.dumps([{"ip_address": "192.168.1.1", "port": 8080, "malware": "QakBot"}])
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/ransomware/recentvictims', 
+            json_payload=json.dumps([{"group_name": "LockBit", "post_title": "MegaCorp", "published": "2023-10-01"}])
+        )
+        cls.mock_server.add_rest_route(
+            path='/nga/broadcast-warn', 
+            json_payload=json.dumps({"broadcast-warn": [{"navArea": "IV", "text": "SUBMARINE CABLE REPAIR OPERATING AT 34N 120W"}]})
+        )
+
         cls.mock_server.start()
 
 
@@ -232,38 +246,38 @@ class TestOsintEngineIntegration(unittest.TestCase):
             adapter=SourceAdapter.URLHAUS,
             poll_interval_sec=1
         )
+        engine.add_rest_source(url=f'{base_url}/feodo/ipblocklist.json', adapter=SourceAdapter.FEODO_TRACKER, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/ransomware/recentvictims', adapter=SourceAdapter.RANSOMWARE_LIVE, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/nga/broadcast-warn', adapter=SourceAdapter.NGA_WARNINGS, poll_interval_sec=1)
+
 
         engine.add_rest_source(url=f'{base_url}/fred/obs', adapter=SourceAdapter.FRED, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/ucdp/events', adapter=SourceAdapter.UCDP, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/oref/alerts', adapter=SourceAdapter.OREF, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/coingecko/price', adapter=SourceAdapter.COINGECKO, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/meteo/current', adapter=SourceAdapter.OPEN_METEO, poll_interval_sec=1)
-
+       
         engine.start_all()
-        time.sleep(1.5) 
-        data = engine.poll()
+
+        expected_keys =  ['acled', 'ais_stream', 'opensky', 'gdelt_geojson', 'google_news_reuters', 
+        'bbc', 'usgs', 'binance', 'nasa_eonet', 'polymarket', 'cloudflare_radar', 'nasa_firms', 
+        'urlhaus', 'fred', 'ucdp', 'oref', 'coingecko', 'open_meteo', 'feodo_tracker', 'ransomware_live', 
+        'nga_warnings']
+
+        data = {}
+        for _ in range(20):  
+            time.sleep(0.5)
+            poll_results = engine.poll()
+            data.update(poll_results)
+            
+            if all(k in data for k in expected_keys):
+                break
+
         engine.stop_all()
         del engine
-        
-        # Ensure all data streams returned payloads using the auto-generated names
-        assert 'acled' in data
-        assert 'ais_stream' in data
-        assert 'opensky' in data
-        assert 'gdelt_geojson' in data
-        assert 'google_news_reuters' in data
-        assert 'bbc' in data
-        assert 'usgs' in data
-        assert 'binance' in data
-        assert 'nasa_eonet' in data
-        assert 'polymarket' in data
-        assert 'cloudflare_radar' in data
-        assert 'nasa_firms' in data
-        assert 'urlhaus' in data
-        assert 'fred' in data
-        assert 'ucdp' in data
-        assert 'oref' in data
-        assert 'coingecko' in data
-        assert 'open_meteo' in data
+                
+        for key in expected_keys:
+            assert key in data, f'key: {key} not in data'                
 
         assert self.mock_server.get_request_count('/api/acled/read') >= 1
 
@@ -391,11 +405,28 @@ class TestOsintEngineIntegration(unittest.TestCase):
         # Check OpenMeteo
         meteo_df = pl.from_arrow(data['open_meteo'])
         assert len(meteo_df) >= 1
-        assert 'temperature' in meteo_df.columns
+        assert meteo_df['temperature'][0] == 22.5
+        if 'feodo_tracker' not in data:
+            raise RuntimeError(f"🚨 FATAL: feodo_tracker missing from FFI! Keys received: {list(data.keys())}")
+
         assert meteo_df['latitude'][0] == 52.52
         assert meteo_df['longitude'][0] == 13.41
         assert meteo_df['temperature'][0] == 22.5
 
+        feodo_df = pl.from_arrow(data['feodo_tracker'])
+        assert len(feodo_df) >= 1
+        assert feodo_df['ip_address'][0] == '192.168.1.1'
+        assert feodo_df['malware'][0] == 'QakBot'
+
+        ransom_df = pl.from_arrow(data['ransomware_live'])
+        assert len(ransom_df) >= 1
+        assert ransom_df['group_name'][0] == 'LockBit'
+        assert ransom_df['victim'][0] == 'MegaCorp'
+
+        nga_df = pl.from_arrow(data['nga_warnings'])
+        assert len(nga_df) >= 1
+        assert nga_df['navArea'][0] == 'IV'
+        assert 'SUBMARINE CABLE' in nga_df['text'][0]
         
 if __name__ == '__main__':
 

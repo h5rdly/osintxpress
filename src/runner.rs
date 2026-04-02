@@ -1,18 +1,22 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use wreq::ws::message::Message;
+
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc; 
 
 use futures_util::StreamExt; 
 
-use grammers_client::{Client as TgClient, client::UpdatesConfiguration, update::Update};
+use grammers_client::{Client as TgClient, client::UpdatesConfiguration, update::Update, media::Media};
+use grammers_client::message::Message as TgMessage;
+
+use grammers_session::{storages::SqliteSession, types::PeerId};
 use grammers_mtsender::SenderPool;
-use grammers_session::storages::SqliteSession;
-use grammers_session::types::PeerId;
 
 use crate::client::HttpClient;
 
+use crate::telegram;
 
 pub trait ConnectionRunner: Send + Sync {
     fn spawn(
@@ -55,10 +59,9 @@ impl ConnectionRunner for RestRunner {
                     Ok(bytes) => {
                         consecutive_errors = 0;
                         if let Ok(text) = String::from_utf8(bytes) {
-                            // Activate then investigating RSS feeds
-                            // if source_name == "google_news_reuters" {
-                            //     tracing::info!("RAW RSS DUMP:\n{}", text);
-                            // }
+                            if source_name == "feodo_tracker" || source_name == "ransomware_live" || source_name == "nga_warnings" {
+                                println!("🌐 [NETWORK] Success for '{}': {} bytes fetched", source_name, text.len());
+                            }
                             let mut guard = buffer.lock().unwrap();
                             let queue = guard.entry(source_name.clone()).or_insert_with(Vec::new);
                             
@@ -113,12 +116,12 @@ impl ConnectionRunner for WsRunner {
                     Ok(response) => {
                         match response.into_websocket().await {
                             Ok(mut ws_stream) => {
-                                tracing::info!("Connected to WS: {}", source_name);
+                                // tracing::info!("Connected to WS: {}", source_name);
                                 backoff_sec = 1;
 
                                 // Send the subscription payload if it exists
                                 if let Some(msg) = &init_message {
-                                    if let Err(e) = ws_stream.send(wreq::ws::message::Message::text(msg.clone())).await {
+                                    if let Err(e) = ws_stream.send(Message::text(msg.clone())).await {
                                         tracing::error!("Failed to send init_message to {}: {}", source_name, e);
                                     } else {
                                         tracing::info!("Sent subscription payload to {}", source_name);
@@ -126,7 +129,7 @@ impl ConnectionRunner for WsRunner {
                                 }
 
                                 while let Some(Ok(msg)) = ws_stream.next().await {
-                                    if let wreq::ws::message::Message::Text(text) = msg {
+                                    if let Message::Text(text) = msg {
                                         let mut guard = buffer.lock().unwrap();
                                         let queue = guard.entry(source_name.clone()).or_insert_with(Vec::new);
                                         
@@ -138,7 +141,7 @@ impl ConnectionRunner for WsRunner {
                                         }
                                     }
                                 }
-                                tracing::warn!("WS stream closed for {}. Attempting reconnect...", source_name);
+                                // tracing::warn!("WS stream closed for {}. Attempting reconnect...", source_name);
                             }
                             Err(e) => {
                                 tracing::error!("WS Upgrade failed for {}: {}. Retrying in {}s", source_name, e, backoff_sec);
@@ -169,6 +172,27 @@ pub struct TelegramMultiplexer {
     pub session_path: String,
     pub channels: Vec<(String, String)>, 
 }
+
+
+async fn process_telegram_message(client: &TgClient, msg: &TgMessage, target_channel: &str,) -> String {
+
+    let mut media_path = String::new();
+    
+    if let Some(Media::Photo(photo)) = msg.media() {
+        let _ = tokio::fs::create_dir_all("osint_media").await;
+        let path = format!("osint_media/{}_{}.jpg", target_channel, msg.id());
+        
+        if let Err(e) = client.download_media(&photo, &path).await {
+            tracing::error!("Photo download failed: {}", e);
+        } else {
+            media_path = path;
+        }
+    }
+    
+    // Pass the media path to the synchronous text formatter
+    telegram::build_message(msg, target_channel, &media_path)
+}
+
 
 impl TelegramMultiplexer {
     pub fn spawn(
@@ -218,17 +242,14 @@ impl TelegramMultiplexer {
 
             loop {
                 tokio::select! {
-                    // --- LIVE MESSAGES ---
+                    // LIVE MESSAGES 
                     update_res = update_stream.next() => {
                         match update_res {
                             Ok(Update::NewMessage(msg)) if !msg.outgoing() => {
-                                // 0.9.0: Use peer_id()
                                 if let Some((source_name, target_channel)) = chat_map.get(&msg.peer_id()) {
-                                    let text = msg.text().replace("\"", "\\\"").replace("\n", "\\n");
-                                    let payload = format!(
-                                        r#"{{"channel": "{}", "text": "{}", "date": {}}}"#,
-                                        target_channel, text, msg.date().timestamp()
-                                    );
+                                    
+                                    let payload = process_telegram_message(&client, &msg, target_channel).await;
+                                    
                                     let mut bg = buffer.lock().unwrap();
                                     let q = bg.entry(source_name.clone()).or_default();
                                     if q.len() < max_buffer_size {
@@ -244,7 +265,7 @@ impl TelegramMultiplexer {
                         }
                     }
 
-                    // --- HISTORY COMMANDS ---
+                    // HISTORY COMMANDS 
                     Some(cmd) = cmd_rx.recv() => {
                         match cmd {
                             TgCommand::FetchHistory { target_channel, limit } => {
@@ -257,18 +278,15 @@ impl TelegramMultiplexer {
                                 tokio::spawn(async move {
                                     match client_clone.resolve_username(&target_channel).await {
                                         Ok(Some(chat)) => {
-                                            // 0.9.0: Extract the PeerRef before iterating!
                                             if let Some(peer_ref) = chat.to_ref().await {
                                                 let mut iter = client_clone.iter_messages(peer_ref);
                                                 let mut count = 0;
                                                 
                                                 while let Ok(Some(msg)) = iter.next().await {
                                                     if count >= limit { break; }
-                                                    let text = msg.text().replace("\"", "\\\"").replace("\n", "\\n");
-                                                    let payload = format!(
-                                                        r#"{{"channel": "{}", "text": "{}", "date": {}}}"#,
-                                                        target_channel, text, msg.date().timestamp()
-                                                    );
+                                                    
+                                                    let payload = process_telegram_message(&client_clone, &msg, &target_channel).await;
+
                                                     let mut bg = buffer_clone.lock().unwrap();
                                                     let q = bg.entry(source_name.clone()).or_default();
                                                     if q.len() < max_buffer_size {
@@ -287,6 +305,8 @@ impl TelegramMultiplexer {
                     }
                 }
             }
+
+
         })
     }
 }

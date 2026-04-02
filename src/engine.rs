@@ -202,14 +202,15 @@ impl Engine {
         let mut parsed_data = HashMap::new();
         let sources = self.sources.lock().unwrap();
         
-        for (name, payloads) in raw_data {
+        for (name, payloads) in raw_data {            
             if let Some(source) = sources.get(&name) {
                 match source.parser.parse(&payloads) {
                     Ok(batch) => {
+                        // println!("✅ [RUST PARSE SUCCESS] Source: '{}' | Rows: {}", name, batch.num_rows());
                         parsed_data.insert(name, batch);
                     }
                     Err(e) => {
-                        tracing::error!("Data parsing failed for source '{}': {}", name, e);
+                        println!("❌ [RUST PARSE FAILED] Source: '{}' | Error: {}", name, e);
                     }
                 }
             }

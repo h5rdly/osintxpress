@@ -1,4 +1,4 @@
-import os, warnings, threading, json
+import os, warnings, threading, json, io, base64, atexit, urllib.request
 from datetime import datetime
 
 import arro3.core as ac
@@ -9,16 +9,75 @@ import panel as pn
 import lonboard
 from lonboard.basemap import MaplibreBasemap, CartoStyle
 
-from osintxpress import OsintEngine, SourceAdapter, login_telegram
-
+# Added scrape_article to our Rust imports!
+from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, 
+    fetch_submarine_cables)
 
 warnings.filterwarnings("ignore", message="No CRS exists on data")
 pn.extension('ipywidgets', 'tabulator', notifications=True, sizing_mode="stretch_width")
 
 
-# ==========================================
-# 1. ENGINE SETUP & PERSISTENCE
-# ==========================================
+## -- Helper functions
+
+def is_rtl(text):
+    
+    for char in text:
+        if char.isalpha():
+            if 0x0590 <= ord(char) <= 0x06FF:
+                return True
+            return False 
+
+    return False
+
+
+def create_tg_card(channel, text, timestamp, media_path=""):
+
+    dt = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
+    color = "var(--accent-fill-active)" if "abu" in channel.lower() else "var(--neutral-fill-active)"
+    
+    direction = "rtl" if is_rtl(text) else "ltr"
+    align = "right" if direction == "rtl" else "left"
+    
+    text = text.replace('\\n', '\n')
+    parts = text.split('\n', 1)
+    if len(parts) > 1:
+        formatted_text = f"<b style='font-size: 1.15em;'>{parts[0]}</b><br><br>{parts[1].replace('\n', '<br>')}"
+    else:
+        formatted_text = text.replace('\n', '<br>')
+
+    # 📸 Read the local file and convert to Base64 HTML image!
+    img_html = ""
+    if media_path and os.path.exists(media_path):
+        try:
+            with open(media_path, "rb") as img_file:
+                b64_str = base64.b64encode(img_file.read()).decode('utf-8')
+                img_html = f"<br><img src='data:image/jpeg;base64,{b64_str}' style='max-width: 100%; border-radius: 4px; margin-top: 10px;'>"
+        except Exception as e:
+            print(f"Error loading image {media_path}: {e}")
+
+    return pn.pane.HTML(
+        f"""
+        <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px; background: var(--neutral-fill-rest);">
+            <small style="color: gray;"><b>@{channel}</b> • {dt}</small><br>
+            <div style="direction: {direction}; text-align: {align}; font-family: sans-serif;">
+                {formatted_text}
+                {img_html}
+            </div>
+        </div>
+        """,
+        sizing_mode="stretch_width"
+    )
+
+
+def cleanup_engine():
+    print("\n🛑 Shutting down Rust Engine")    
+    engine.stop_all() 
+
+atexit.register(cleanup_engine)
+
+
+## -- Engine setup
+
 engine = OsintEngine(worker_threads=4)
 
 stealth_headers = {
@@ -61,15 +120,10 @@ for channel in active_channels:
 
 engine.start_all()
 
-# Dummy method so the UI button doesn't crash until we update the Rust backend!
-if not hasattr(engine, 'fetch_telegram_history'):
-    def dummy_fetch(channel, limit):
-        print(f"Rust backend needs MPSC channel update to fetch {limit} msgs from {channel}!")
-    engine.fetch_telegram_history = dummy_fetch
+## --  UI components & Static Map Layers
 
-# ==========================================
-# 2. MAP UI COMPONENTS
-# ==========================================
+base_layers = []
+
 switch_flights = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 switch_ships = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 switch_quakes = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
@@ -88,7 +142,7 @@ layer_controls = pn.Column(
 system_stats = pn.pane.Markdown("🟢 **Engine Status:** Online\n📡 **Tracking:** 0 events")
 
 interactive_map = lonboard.Map(
-    layers=[], 
+    layers=base_layers, # Initialize with the submarine cables!
     basemap=MaplibreBasemap(style=CartoStyle.DarkMatter), 
     view_state={"longitude": 34.8, "latitude": 31.5, "zoom": 3, "pitch": 25, "minZoom": 2.5, "maxZoom": 20}
 )
@@ -102,49 +156,77 @@ map_tab = pn.Row(
     styles={'height': '85vh'} 
 )
 
-# ==========================================
-# 3. TELEGRAM UI & HISTORY CONTROLS
-# ==========================================
+
+## -- Telegram UI / History
+
 feed_container = pn.Column(sizing_mode="stretch_width")
 
-# 3a. Active Channels List
-active_channels_pane = pn.Column()
-def update_channels_ui():
-    blocks = [
-        pn.pane.HTML(f"""
-        <div style='padding: 6px; border-left: 3px solid #0096ff; margin-bottom: 8px; background: var(--neutral-fill-rest); border-radius: 0 4px 4px 0;'>
-            <b>@{ch}</b>
-        </div>
-        """) for ch in active_channels
-    ]
-    active_channels_pane.objects = blocks
+# Multi-Select List
+sources_list = pn.widgets.MultiSelect(
+    name='Registered Sources (Ctrl/Shift-click to multi-select)',
+    options=active_channels,
+    size=10, 
+    sizing_mode='stretch_width'
+)
 
-update_channels_ui()
+# New Channel Controls
+new_channel_input = pn.widgets.TextInput(placeholder="e.g. ReutersWorldChannel", sizing_mode='stretch_width')
+add_channel_btn = pn.widgets.Button(name="➕ Add Channel", button_type="success", sizing_mode='stretch_width')
 
-# 3b. History Fetcher
-history_select = pn.widgets.Select(name="Target Channel", options=active_channels)
-history_limit = pn.widgets.IntInput(name="Messages to Fetch", value=5, start=1, end=100)
-history_btn = pn.widgets.Button(name="⏪ Fetch History", button_type="primary")
+def on_add_channel(event):
+    new_channel = new_channel_input.value.strip()
+    if new_channel:
+        # Add to Rust engine
+        engine.add_telegram_source(
+            name=f"tg_{new_channel}", 
+            target_channel=new_channel, 
+            tg_api_id=TG_API_ID, 
+            tg_api_hash=TG_API_HASH,
+            tg_session_path=SESSION
+        )
+        
+        # Update active_channels and persist to disk
+        if new_channel not in active_channels:
+            active_channels.append(new_channel)
+            with open(CHANNELS_FILE, "w") as f:
+                json.dump(active_channels, f)
+            
+            # Update the UI list options
+            sources_list.options = active_channels.copy()
+            
+        new_channel_input.value = ""
+        pn.state.notifications.success(f"Multiplexed Telegram channel: @{new_channel}")
 
+add_channel_btn.on_click(on_add_channel)
 
-def trigger_history_fetch(event):
+# History Controls
+fetch_limit_input = pn.widgets.IntInput(name="Messages", value=5, start=1, end=1000, width=80)
+fetch_history_btn = pn.widgets.Button(name="⏪ Fetch History", button_type="primary", sizing_mode='stretch_width')
 
-    target = history_select.value
-    limit = history_limit.value
-    engine.fetch_telegram_history(target, limit)
-    pn.state.notifications.info(f"Rust command dispatched: Fetching {limit} messages from @{target}...")
+def on_fetch_history(event):
+    selected_sources = sources_list.value
+    limit = fetch_limit_input.value
+    
+    if not selected_sources:
+        pn.state.notifications.warning("No sources selected!")
+        return
+        
+    for target_channel in selected_sources:
+        engine.fetch_telegram_history(target_channel, limit) 
+        pn.state.notifications.info(f"Fetching {limit} historical messages from @{target_channel}...")
 
-history_btn.on_click(trigger_history_fetch)
+fetch_history_btn.on_click(on_fetch_history)
 
 telegram_sidebar = pn.Column(
-    pn.pane.Markdown("### 📡 Registered Sources"),
-    active_channels_pane,
+    sources_list,
     pn.layout.Divider(),
-    pn.pane.Markdown("### ⏪ Historical Lookup"),
-    history_select,
-    history_limit,
-    history_btn,
-    width=240
+    fetch_limit_input, 
+    fetch_history_btn,
+    pn.layout.Divider(),
+    new_channel_input, 
+    add_channel_btn,
+
+    width=260
 )
 
 telegram_tab = pn.Row(
@@ -155,22 +237,41 @@ telegram_tab = pn.Row(
 )
 
 
-# ==========================================
-# 4. DATA GRIDS (WITH EXPANDABLE ROWS!)
-# ==========================================
+## -- Data Grids
+
 def expand_news(row):
     title = row.get("title", "No Title")
     link = row.get("link", "#")
     pub = row.get("pubDate", row.get("date", "Unknown Date"))
-                
-    return pn.pane.HTML(f"""
-        <div style='padding: 15px; margin: 5px; background-color: var(--neutral-fill-rest); border-left: 4px solid #0096ff; border-radius: 4px; cursor: default;'>
-            <small style='color: gray;'>{pub}</small><br><br>
-            <span style='font-size: 1.1em;'><b>{title}</b></span><br><br>
-            <a href='{link}' target='_blank' style='color: #0096ff; text-decoration: none;'><b>Read Full Article in New Tab 🔗</b></a>
-        </div>
-    """, sizing_mode="stretch_width")
+    
+    # 🚀 Dynamically scrape the article via Rust when expanded
+    article_markdown = scrape_article(link)
 
+    # formatted_text = article_text.replace("\n", "<br>")
+                
+    return pn.Column(
+        pn.pane.HTML(f"""
+            <div style='padding: 15px 15px 0 15px; margin-top: 5px; background-color: var(--neutral-fill-rest); border-left: 4px solid #0096ff; border-radius: 4px 4px 0 0; cursor: default;'>
+                <small style='color: gray;'>{pub}</small><br><br>
+                <span style='font-size: 1.1em;'><b>{title}</b></span><br>
+                <hr style='border: 1px solid #333; margin: 15px 0 0 0;'>
+            </div>
+        """, sizing_mode="stretch_width"),
+        pn.pane.Markdown(
+            article_markdown, 
+            sizing_mode="stretch_width", 
+            styles={'background-color': 'var(--neutral-fill-rest)', 'padding': '0 15px', 'border-left': '4px solid #0096ff', 'font-family': 'serif', 'font-size': '1.05em'}
+        ),
+        pn.pane.HTML(f"""
+            <div style='padding: 0 15px 15px 15px; margin-bottom: 5px; background-color: var(--neutral-fill-rest); border-left: 4px solid #0096ff; border-radius: 0 0 4px 4px; cursor: default;'>
+                <br>
+                <a href='{link}' target='_blank' style='color: #0096ff; text-decoration: none;'><b>View Original Source 🔗</b></a>
+            </div>
+        """, sizing_mode="stretch_width"),
+        sizing_mode="stretch_width",
+        margin=0
+    )
+    
 news_grid = pn.widgets.Tabulator(theme='fast', show_index=False, row_content=expand_news, selectable=False)
 poly_grid = pn.widgets.Tabulator(theme='fast', disabled=True, show_index=False)
 
@@ -188,10 +289,7 @@ data_tabs = pn.Tabs(
     sizing_mode="stretch_both"
 )
 
-
-# ==========================================
-# 5. DYNAMIC ENGINE CONFIG & GUI LOGIN
-# ==========================================
+## -- Engine config & login
 config_desc = pn.pane.Markdown("### ⚙️ Hot-Swap Data Sources\nInject new REST APIs, WebSockets, or Telegram channels into the running Rust engine without restarting.")
 
 adapter_select = pn.widgets.Select(name="Parser Module", options=[
@@ -216,7 +314,6 @@ def hot_swap_source(event):
             active_channels.append(target)
             with open(CHANNELS_FILE, "w") as f:
                 json.dump(active_channels, f)
-            # Update the UI dynamically!
             update_channels_ui()
             history_select.options = active_channels
             
@@ -241,7 +338,7 @@ def hot_swap_source(event):
 
 add_source_btn.on_click(hot_swap_source)
 
-# ---- GUI TELEGRAM LOGIN ----
+# Telegram login
 auth_event = threading.Event()
 tg_login_btn = pn.widgets.Button(name="🔐 Authorize Telegram Session", button_type="success", width=250)
 
@@ -346,9 +443,8 @@ config_tab = pn.Column(
     sizing_mode="stretch_both"
 )
 
-# ==========================================
-# 6. MASTER TEMPLATE ASSEMBLY
-# ==========================================
+## -- Master template
+
 sticky_tab_style = """
 :host { height: 100%; }
 .bk-header {
@@ -364,7 +460,7 @@ sticky_tab_style = """
 
 master_tabs = pn.Tabs(
     ("🗺️ Tactical Map", map_tab),
-    ("📱 Live Telegram", telegram_tab), # Using the new layout here!
+    ("📱 Live Telegram", telegram_tab), 
     ("📊 Data Feeds", data_tabs),
     ("⚙️ Engine Config", config_tab),
     dynamic=False, 
@@ -372,35 +468,40 @@ master_tabs = pn.Tabs(
     stylesheets=[sticky_tab_style]
 )
 
-def create_tg_card(channel, text, timestamp):
-    
-    dt = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
-    color = "var(--accent-fill-active)" if "abu" in channel.lower() else "var(--neutral-fill-active)"
-    
-    text = text.replace('\\n', '\n')
-    parts = text.split('\n', 1)
-    if len(parts) > 1:
-        formatted_text = f"<b style='font-size: 1.15em;'>{parts[0]}</b><br><br>{parts[1].replace('\n', '<br>')}"
-    else:
-        formatted_text = text.replace('\n', '<br>')
 
-    return pn.pane.HTML(
-        f"""
-        <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px; background: var(--neutral-fill-rest);">
-            <small style="color: gray;"><b>@{channel}</b> • {dt}</small><br>
-            <div style="direction: rtl; text-align: right; font-family: sans-serif;">{formatted_text}</div>
-        </div>
-        """,
-        sizing_mode="stretch_width"
-    )
+## -- Background Initializers
 
-# ==========================================
-# 7. POLLING LOGIC
-# ==========================================
+def load_submarine_cables():
+    
+    cable_url = "https://raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/cable/cable-geo.json"
+    try:
+        print("#### Fetching submarine cable network in the background...")
+        cable_table = fetch_submarine_cables()
+        
+        cable_layer = lonboard.PathLayer(
+            table=cable_table,
+            get_color=[0, 255, 255, 100], 
+            width_min_pixels=1.5
+        )
+        base_layers.append(cable_layer)
+        
+        # Merge the new base layer with whatever active layers are currently showing
+        interactive_map.layers = base_layers + list(interactive_map.layers)
+        print("#### Submarine cables loaded.")
+    except Exception as e:
+        print(f"Could not load undersea cables: {e}")
+
+# Fire this function exactly once, 500ms after the dashboard fully loads!
+# pn.state.add_periodic_callback(load_submarine_cables, period=500, count=1)
+
+
+## -- Polling logic
+
 cached_layers = {}
 cached_counts = {}
 
 def update_dashboard():
+
     data = engine.poll()
     
     if "opensky" in data:
@@ -471,9 +572,10 @@ def update_dashboard():
         active_layers.append(cached_layers["acled"])
         total_tracked += cached_counts["acled"]
 
-    interactive_map.layers = active_layers
+    # Safely combine the static base layers (cables) with the dynamic active layers!
+    interactive_map.layers = base_layers + active_layers
 
-    # -- Update Data Grids --
+    # Update Data Grids 
     if "google_news_reuters" in data:
         df = pl.from_arrow(data["google_news_reuters"])
         if len(df) > 0:
@@ -484,19 +586,15 @@ def update_dashboard():
         if len(df) > 0:
             poly_grid.value = df.sort("volume", descending=True).to_pandas()
 
-
-    # -- Update Telegram --
+    # Update Telegram 
     new_messages = []
     for tg_src in list(data.keys()): 
         if tg_src.startswith("tg_"):
-            # Convert to Polars FIRST!
             df = pl.from_arrow(data[tg_src])
-            
-            # Now we can safely check the length
             if len(df) > 0:
                 df = df.sort("date", descending=False)
                 for row in df.iter_rows(named=True):
-                    new_messages.append(create_tg_card(row['channel'], row['text'], row['date']))
+                    new_messages.append(create_tg_card(row['channel'], row['text'], row['date'], row.get('media', '')))
                 
     if new_messages:
         feed_container.objects = new_messages + feed_container.objects[:100]
@@ -505,6 +603,7 @@ def update_dashboard():
         system_stats.object = f"🟢 **Engine Status:** Online\n📡 **Tracking:** {total_tracked:,} events"
 
 pn.state.add_periodic_callback(update_dashboard, period=5000)
+
 
 template = pn.template.FastListTemplate(
     title="OSINTxpress Global Monitor",

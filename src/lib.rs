@@ -7,13 +7,16 @@ use grammers_session::storages::SqliteSession;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyAny};
-use pyo3_arrow::PyRecordBatch; 
+use pyo3_arrow::{PyRecordBatch}; 
 
 mod engine;
 mod mock_server; 
 mod client;
 mod parser;
 mod runner;
+mod scrape;
+mod telegram;
+mod geo;
 mod mlt;
 
 use engine::Engine;
@@ -81,6 +84,10 @@ pub fn sources() -> Vec<SourceAdapter> {
         src(ParserType::Oref,      "OREF",       "https://www.oref.org.il/WarningMessages/alert/alerts.json"),
         src(ParserType::CoinGecko, "COINGECKO",  "https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin&vs_currencies=usd"),
         src(ParserType::OpenMeteo, "OPEN_METEO", "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true"),
+        src(ParserType::FeodoTracker, "FEODO_TRACKER", "https://feodotracker.abuse.ch/downloads/ipblocklist.json"),
+        src(ParserType::RansomwareLive, "RANSOMWARE_LIVE", "https://api.ransomware.live/v2/recentvictims"),
+        src(ParserType::NgaWarnings, "NGA_WARNINGS", "https://msi.nga.mil/api/publications/broadcast-warn?output=json"),
+
     ]
 }
 
@@ -228,6 +235,10 @@ fn login_telegram<'py>(
 }
 
 
+// -- GeoJSON 
+
+
+
 // -- Aux MLT conversion methods
 
 #[pyfunction]
@@ -304,6 +315,9 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     m.add_function(wrap_pyfunction!(login_telegram, m)?)?;
     m.add_function(wrap_pyfunction!(sources, m)?)?;
+
+    m.add_function(wrap_pyfunction!(scrape::scrape_article, m)?)?;
+    m.add_function(wrap_pyfunction!(geo::fetch_submarine_cables, m)?)?;
 
     m.add_function(wrap_pyfunction!(arrow_to_mlt, m)?)?;
     m.add_function(wrap_pyfunction!(list_mlt_layers, m)?)?;

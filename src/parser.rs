@@ -34,6 +34,9 @@ pub enum ParserType {
     Oref,
     CoinGecko,
     OpenMeteo,
+    FeodoTracker,
+    RansomwareLive,
+    NgaWarnings,
 }
 
 
@@ -66,6 +69,10 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::Oref      => Box::new(OrefParser),
         ParserType::CoinGecko => Box::new(CoinGeckoParser),
         ParserType::OpenMeteo => Box::new(OpenMeteoParser),
+        ParserType::FeodoTracker  => Box::new(FeodoParser),
+        ParserType::RansomwareLive => Box::new(RansomwareLiveParser),
+        ParserType::NgaWarnings   => Box::new(NgaParser),
+
     }
 
 }
@@ -713,6 +720,90 @@ impl SourceParser for OpenMeteoParser {
     }
 }
 
+
+
+pub struct FeodoParser;
+impl SourceParser for FeodoParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut ip_builder = StringBuilder::new();
+        let mut port_builder = Int32Builder::new();
+        let mut malware_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(events) = val.as_array() {
+                    for event in events {
+                        ip_builder.append_option(event.get("ip_address").and_then(|v| v.as_str()));
+                        port_builder.append_option(event.get("port").and_then(|v| v.as_i64()).map(|p| p as i32));
+                        malware_builder.append_option(event.get("malware").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ip_address", DataType::Utf8, true),
+            Field::new("port", DataType::Int32, true),
+            Field::new("malware", DataType::Utf8, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(ip_builder.finish()), Arc::new(port_builder.finish()), Arc::new(malware_builder.finish())])
+            .map_err(|e| format!("Failed to build Feodo batch: {}", e))
+    }
+}
+
+pub struct RansomwareLiveParser;
+impl SourceParser for RansomwareLiveParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut group_builder = StringBuilder::new();
+        let mut victim_builder = StringBuilder::new();
+        let mut date_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(events) = val.as_array() {
+                    for event in events {
+                        group_builder.append_option(event.get("group_name").and_then(|v| v.as_str()));
+                        victim_builder.append_option(event.get("post_title").and_then(|v| v.as_str()));
+                        date_builder.append_option(event.get("published").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("group_name", DataType::Utf8, true),
+            Field::new("victim", DataType::Utf8, true),
+            Field::new("published", DataType::Utf8, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(group_builder.finish()), Arc::new(victim_builder.finish()), Arc::new(date_builder.finish())])
+            .map_err(|e| format!("Failed to build RansomwareLive batch: {}", e))
+    }
+}
+
+pub struct NgaParser;
+impl SourceParser for NgaParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut navarea_builder = StringBuilder::new();
+        let mut text_builder = StringBuilder::new();
+
+        for payload in payloads {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                if let Some(warnings) = val.get("broadcast-warn").and_then(|w| w.as_array()) {
+                    for warning in warnings {
+                        navarea_builder.append_option(warning.get("navArea").and_then(|v| v.as_str()));
+                        text_builder.append_option(warning.get("text").and_then(|v| v.as_str()));
+                    }
+                }
+            }
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("navArea", DataType::Utf8, true),
+            Field::new("text", DataType::Utf8, true),
+        ]));
+        RecordBatch::try_new(schema, vec![Arc::new(navarea_builder.finish()), Arc::new(text_builder.finish())])
+            .map_err(|e| format!("Failed to build NGA batch: {}", e))
+    }
+}
+
+
 // -- Telegram
 
 pub struct TelegramParser;
@@ -722,13 +813,21 @@ impl SourceParser for TelegramParser {
         let mut channel_builder = StringBuilder::new();
         let mut text_builder = StringBuilder::new();
         let mut date_builder = Int64Builder::new();
+        let mut media_builder = StringBuilder::new(); // (Might need arrow::array::StringBuilder depending on your imports)
 
         for payload in payloads {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
+                
                 id_builder.append_option(val.get("message_id").and_then(|v| v.as_i64()));
                 channel_builder.append_option(val.get("channel").and_then(|v| v.as_str()));
                 text_builder.append_option(val.get("text").and_then(|v| v.as_str()));
                 date_builder.append_option(val.get("date").and_then(|v| v.as_i64()));
+
+                if let Some(media) = val.get("media").and_then(|v| v.as_str()) {
+                    media_builder.append_value(media);
+                } else { 
+                    media_builder.append_value(""); 
+                }
             }
         }
 
@@ -737,6 +836,7 @@ impl SourceParser for TelegramParser {
             Field::new("channel", DataType::Utf8, true),
             Field::new("text", DataType::Utf8, true),
             Field::new("date", DataType::Int64, true),
+            Field::new("media", DataType::Utf8, true),
         ]));
 
         RecordBatch::try_new(
@@ -746,6 +846,7 @@ impl SourceParser for TelegramParser {
                 Arc::new(channel_builder.finish()),
                 Arc::new(text_builder.finish()),
                 Arc::new(date_builder.finish()),
+                Arc::new(media_builder.finish()), 
             ],
         ).map_err(|e| format!("Failed to build Telegram batch: {}", e))
     }

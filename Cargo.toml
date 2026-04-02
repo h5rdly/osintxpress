@@ -17,7 +17,6 @@ arrow = { version = "58.1.0", default-features = false, features = ["ffi"] }
 pyo3-arrow = "0.17.0"
 
 mlt-core = "0.6.0"
-geo-types = "0.7.18"
 
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures-util = "0.3"
@@ -26,12 +25,17 @@ axum = { version = "0.8.8", features = ["ws"] }
 wreq = { version = "6.0.0-rc.28", features = ["ws"] }
 wreq-util = "3.0.0-rc.10"
 
+scraper = "0.26.0"
+
 grammers-client = "0.9" 
 grammers-session = "0.9"
 grammers-mtsender = "0.9"
 
-geoarrow = "0.7"
 h3o = "0.9.4" 
+geoarrow = "0.8.0"
+geo-types = "0.7.18"
+geojson = "1.0.0"
+
 
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py312"]}
 pythonize = "0.28.0"

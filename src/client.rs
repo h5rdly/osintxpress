@@ -19,8 +19,13 @@ pub struct WreqClient {
 
 impl WreqClient {
     pub fn new() -> Self {
-        let client = Client::builder().emulation(Emulation::Safari17_5).timeout(Duration::from_secs(NETWORK_TIMEOUT))
-        .build().expect("Failed to build impersonating wreq client");
+        let client = Client::builder()
+            .emulation(Emulation::Safari17_5)
+            .timeout(Duration::from_secs(NETWORK_TIMEOUT))
+            .redirect(wreq::redirect::Policy::limited(5))     // follow up to 5 redirects   
+            .build()
+            .expect("Failed to build impersonating wreq client");
+            
         Self { client }
     }
 }
