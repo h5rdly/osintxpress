@@ -91,7 +91,7 @@ pub fn sources() -> Vec<SourceAdapter> {
     ]
 }
 
-#[pyclass]
+#[pyclass(subclass)]
 pub struct OsintEngine {
     engine: Engine,
     http_client: Arc<dyn client::HttpClient>, 

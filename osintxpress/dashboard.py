@@ -11,72 +11,15 @@ from lonboard.basemap import MaplibreBasemap, CartoStyle
 
 # Added scrape_article to our Rust imports!
 from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, 
-    fetch_submarine_cables)
+    fetch_submarine_cables, _is_rtl)
 
 warnings.filterwarnings("ignore", message="No CRS exists on data")
 pn.extension('ipywidgets', 'tabulator', notifications=True, sizing_mode="stretch_width")
 
 
-## -- Helper functions
-
-def is_rtl(text):
-    
-    for char in text:
-        if char.isalpha():
-            if 0x0590 <= ord(char) <= 0x06FF:
-                return True
-            return False 
-
-    return False
-
-
-def create_tg_card(channel, text, timestamp, media_path=""):
-
-    dt = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
-    color = "var(--accent-fill-active)" if "abu" in channel.lower() else "var(--neutral-fill-active)"
-    
-    direction = "rtl" if is_rtl(text) else "ltr"
-    align = "right" if direction == "rtl" else "left"
-    
-    text = text.replace('\\n', '\n')
-    parts = text.split('\n', 1)
-    if len(parts) > 1:
-        formatted_text = f"<b style='font-size: 1.15em;'>{parts[0]}</b><br><br>{parts[1].replace('\n', '<br>')}"
-    else:
-        formatted_text = text.replace('\n', '<br>')
-
-    # 📸 Read the local file and convert to Base64 HTML image!
-    img_html = ""
-    if media_path and os.path.exists(media_path):
-        try:
-            with open(media_path, "rb") as img_file:
-                b64_str = base64.b64encode(img_file.read()).decode('utf-8')
-                img_html = f"<br><img src='data:image/jpeg;base64,{b64_str}' style='max-width: 100%; border-radius: 4px; margin-top: 10px;'>"
-        except Exception as e:
-            print(f"Error loading image {media_path}: {e}")
-
-    return pn.pane.HTML(
-        f"""
-        <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px; background: var(--neutral-fill-rest);">
-            <small style="color: gray;"><b>@{channel}</b> • {dt}</small><br>
-            <div style="direction: {direction}; text-align: {align}; font-family: sans-serif;">
-                {formatted_text}
-                {img_html}
-            </div>
-        </div>
-        """,
-        sizing_mode="stretch_width"
-    )
-
-
-def cleanup_engine():
-    print("\n🛑 Shutting down Rust Engine")    
-    engine.stop_all() 
-
-atexit.register(cleanup_engine)
-
 
 ## -- Engine setup
+##
 
 engine = OsintEngine(worker_threads=4)
 
@@ -120,7 +63,9 @@ for channel in active_channels:
 
 engine.start_all()
 
+
 ## --  UI components & Static Map Layers
+##
 
 base_layers = []
 
@@ -142,7 +87,7 @@ layer_controls = pn.Column(
 system_stats = pn.pane.Markdown("🟢 **Engine Status:** Online\n📡 **Tracking:** 0 events")
 
 interactive_map = lonboard.Map(
-    layers=base_layers, # Initialize with the submarine cables!
+    layers=base_layers, # Initialize with the submarine cables
     basemap=MaplibreBasemap(style=CartoStyle.DarkMatter), 
     view_state={"longitude": 34.8, "latitude": 31.5, "zoom": 3, "pitch": 25, "minZoom": 2.5, "maxZoom": 20}
 )
@@ -157,7 +102,120 @@ map_tab = pn.Row(
 )
 
 
-## -- Telegram UI / History
+## -- Connection Manager UI
+##
+
+def create_row_callbacks(src_name, toggle_widget):
+
+    def on_toggle(event):
+        if event.new:
+            engine.start_source(src_name)
+            pn.state.notifications.success(f"▶️ {src_name.upper()} started")
+        else:
+            engine.stop_source(src_name)
+            pn.state.notifications.warning(f"⏸️ {src_name.upper()} stopped")
+
+
+    def on_interval_change(event):
+
+        new_val = event.new
+        c = engine.source_registry[src_name]
+        c['interval'] = new_val
+        
+        # Hot-swap the Tokio task
+        engine.stop_source(src_name)
+        engine.add_rest_source(c['adapter'], poll_interval_sec=new_val, headers=c['headers'])
+        
+        if not toggle_widget.value:
+            engine.stop_source(src_name)
+            
+        pn.state.notifications.info(f"⏱️ {src_name.upper()} interval updated to {new_val}s")
+
+    return on_interval_change, on_toggle
+
+
+def build_source_manager():
+
+    rows = [
+        pn.pane.Markdown("### 📡 Active Connection Manager\n*Live control over the Rust background polling workers.*"),
+        pn.Row(pn.pane.Markdown("**Source Name**", width=180), pn.pane.Markdown("**Poll**", width=80), pn.pane.Markdown("**Status**", width=60)),
+        pn.layout.Divider()
+    ]
+    
+    # Read from the Engine's internal Python state
+    for name, cfg in engine.source_registry.items():
+        badge_color = "#0096ff" if cfg['type'] == 'ws' else "#39ff14"
+        badge_text = "WS" if cfg['type'] == 'ws' else "REST"
+        
+        label = pn.pane.HTML(f"<b style='font-size:1.1em;'>{name.upper()}</b> <span style='background:{badge_color}; color:black; padding:2px 6px; border-radius:4px; font-size:0.7em;'>{badge_text}</span>", width=180)
+        
+        toggle = pn.widgets.Switch(value=True, width=50, margin=(10,0))
+        interval_change_cb, toggle_cb = create_row_callbacks(name, toggle)
+        toggle.param.watch(toggle_cb, 'value')
+        
+        if cfg['type'] == 'rest':
+            spinner = pn.widgets.IntInput(value=cfg['interval'], start=1, end=3600, width=80)
+            spinner.param.watch(interval_change_cb, 'value')
+        else:
+            spinner = pn.pane.Markdown("*(Push)*", width=80, margin=(10,0))
+        
+        rows.append(pn.Row(label, spinner, toggle, align="center"))
+        
+    return pn.Column(*rows, sizing_mode='stretch_width')
+
+source_manager_panel = build_source_manager()
+
+
+## -- Telegram UI / History / Login
+##  
+
+def create_tg_card(channel, text, timestamp, media_path=""):
+
+    dt = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
+    color = "var(--accent-fill-active)" if "abu" in channel.lower() else "var(--neutral-fill-active)"
+    
+    direction = "rtl" if _is_rtl(text) else "ltr"
+    align = "right" if direction == "rtl" else "left"
+    
+    text = text.replace('\\n', '\n')
+    parts = text.split('\n', 1)
+    if len(parts) > 1:
+        formatted_text = f"<b style='font-size: 1.15em;'>{parts[0]}</b><br><br>{parts[1].replace('\n', '<br>')}"
+    else:
+        formatted_text = text.replace('\n', '<br>')
+
+    # 📸 Wrap the local file in an HTML <details> collapsible!
+    img_html = ""
+    if media_path and os.path.exists(media_path):
+        try:
+            with open(media_path, "rb") as img_file:
+                b64_str = base64.b64encode(img_file.read()).decode('utf-8')
+                
+                # Native HTML collapsible: no Python callbacks required!
+                img_html = f"""
+                <details style="margin-top: 12px;">
+                    <summary style="cursor: pointer; color: {color}; font-weight: bold; outline: none; user-select: none; font-size: 0.9em;">
+                        📎 Show Attached Media
+                    </summary>
+                    <img src='data:image/jpeg;base64,{b64_str}' style='max-width: 100%; border-radius: 4px; margin-top: 8px;'>
+                </details>
+                """
+        except Exception as e:
+            print(f"Error loading image {media_path}: {e}")
+
+    return pn.pane.HTML(
+        f"""
+        <div style="border-left: 4px solid {color}; padding-left: 10px; padding-bottom: 5px; margin-bottom: 10px; background: var(--neutral-fill-rest);">
+            <small style="color: gray;"><b>@{channel}</b> • {dt}</small><br>
+            <div style="direction: {direction}; text-align: {align}; font-family: sans-serif;">
+                {formatted_text}
+                {img_html}
+            </div>
+        </div>
+        """,
+        sizing_mode="stretch_width"
+    )
+
 
 feed_container = pn.Column(sizing_mode="stretch_width")
 
@@ -169,11 +227,12 @@ sources_list = pn.widgets.MultiSelect(
     sizing_mode='stretch_width'
 )
 
-# New Channel Controls
+# -  New Channel Controls
 new_channel_input = pn.widgets.TextInput(placeholder="e.g. ReutersWorldChannel", sizing_mode='stretch_width')
 add_channel_btn = pn.widgets.Button(name="➕ Add Channel", button_type="success", sizing_mode='stretch_width')
 
 def on_add_channel(event):
+
     new_channel = new_channel_input.value.strip()
     if new_channel:
         # Add to Rust engine
@@ -199,7 +258,7 @@ def on_add_channel(event):
 
 add_channel_btn.on_click(on_add_channel)
 
-# History Controls
+# - History Controls
 fetch_limit_input = pn.widgets.IntInput(name="Messages", value=5, start=1, end=1000, width=80)
 fetch_history_btn = pn.widgets.Button(name="⏪ Fetch History", button_type="primary", sizing_mode='stretch_width')
 
@@ -217,7 +276,112 @@ def on_fetch_history(event):
 
 fetch_history_btn.on_click(on_fetch_history)
 
-telegram_sidebar = pn.Column(
+# - Telegram login
+
+auth_event = threading.Event()
+tg_login_btn = pn.widgets.Button(name="🔐 Authorize Telegram Session", button_type="success", width=250)
+
+api_id_input = pn.widgets.TextInput(name="API ID")
+api_hash_input = pn.widgets.PasswordInput(name="API Hash")
+phone_input = pn.widgets.TextInput(name="Phone Number", placeholder="+1234567890")
+
+request_code_btn = pn.widgets.Button(name="1. Request Code", button_type="primary")
+code_input = pn.widgets.TextInput(name="2FA Code", disabled=True, placeholder="Waiting for Telegram...")
+submit_code_btn = pn.widgets.Button(name="2. Submit Code", button_type="success", disabled=True)
+
+def auto_submit_code(event):
+    code = event.new.strip()
+    if len(code) == 5 and code.isdigit():
+        auth_event.set()
+
+code_input.param.watch(auto_submit_code, 'value')
+
+
+def get_code_callback():
+    def update_ui():
+        code_input.disabled = False
+        submit_code_btn.disabled = False
+        request_code_btn.disabled = True
+        pn.state.notifications.info("Please enter the 5-digit code sent to your Telegram app.")
+    
+    pn.state.execute(update_ui)
+    auth_event.wait()
+    return code_input.value.strip()
+
+
+def start_auth_process(event):
+    if not api_id_input.value or not api_hash_input.value or not phone_input.value:
+        pn.state.notifications.error("API ID, Hash, and Phone are required!")
+        return
+        
+    auth_event.clear()
+    code_input.value = ""
+    request_code_btn.disabled = True
+    request_code_btn.name = "Requesting..."
+    
+    def worker():
+        try:
+            login_telegram(int(api_id_input.value), api_hash_input.value, phone_input.value, SESSION, get_code_callback)
+            def on_success():
+                pn.state.notifications.success("Authorization complete!")
+                template.close_modal()
+            pn.state.execute(on_success)
+        except Exception as e:
+            error_msg = str(e)
+            pn.state.execute(lambda msg=error_msg: pn.state.notifications.error(f"Login failed: {msg}"))
+        finally:
+            pn.state.execute(reset_login_ui)
+            
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def reset_login_ui():
+    request_code_btn.name = "1. Request Code"
+    request_code_btn.disabled = False
+    code_input.disabled = True
+    submit_code_btn.disabled = True
+
+
+def submit_code(event):
+    if code_input.value.strip():
+        auth_event.set()
+    else:
+        pn.state.notifications.error("Please enter the code first.")
+
+request_code_btn.on_click(start_auth_process)
+submit_code_btn.on_click(submit_code)
+
+login_instructions = pn.pane.Markdown("""
+### 🔐 Telegram MTProto Authorization
+**How to get your API credentials:**
+1. Go to [my.telegram.org](https://my.telegram.org) and log in.
+2. Click **API development tools**.
+3. Fill out the form (App title: `OsintXpress`, Short name: `osintxpress`, Platform: `Desktop`).
+4. Click **Create application**.
+5. Paste your new **api_id** and **api_hash** below.
+""")
+
+login_modal = pn.Column(
+    login_instructions,
+    pn.Row(api_id_input, api_hash_input),
+    phone_input,
+    request_code_btn,
+    pn.layout.Divider(),
+    pn.Row(code_input, submit_code_btn)
+)
+
+
+def show_login_modal(event):
+    template.modal[0].clear()
+    template.modal[0].append(login_modal)
+    template.open_modal()
+    
+tg_login_btn.on_click(show_login_modal)
+
+# Collapsible Sidebar 
+toggle_sidebar_btn = pn.widgets.Button(name='◀', width=40, button_type='default')
+
+telegram_sidebar_controls = pn.Column(
     sources_list,
     pn.layout.Divider(),
     fetch_limit_input, 
@@ -225,8 +389,28 @@ telegram_sidebar = pn.Column(
     pn.layout.Divider(),
     new_channel_input, 
     add_channel_btn,
-
+    pn.pane.Markdown("### 🔑 Authentication"),
+    tg_login_btn, 
     width=260
+)
+
+def toggle_sidebar(event):
+
+    if telegram_sidebar_controls.visible:
+        telegram_sidebar_controls.visible = False
+        toggle_sidebar_btn.name = '▶'
+        toggle_sidebar_btn.width = 40 
+    else:
+        telegram_sidebar_controls.visible = True
+        toggle_sidebar_btn.name = '◀'
+        toggle_sidebar_btn.width = 40
+
+toggle_sidebar_btn.on_click(toggle_sidebar)
+
+telegram_sidebar = pn.Column(
+    toggle_sidebar_btn,
+    telegram_sidebar_controls,
+    sizing_mode='stretch_height' 
 )
 
 telegram_tab = pn.Row(
@@ -238,6 +422,7 @@ telegram_tab = pn.Row(
 
 
 ## -- Data Grids
+##
 
 def expand_news(row):
     title = row.get("title", "No Title")
@@ -289,7 +474,10 @@ data_tabs = pn.Tabs(
     sizing_mode="stretch_both"
 )
 
+
 ## -- Engine config & login
+##
+
 config_desc = pn.pane.Markdown("### ⚙️ Hot-Swap Data Sources\nInject new REST APIs, WebSockets, or Telegram channels into the running Rust engine without restarting.")
 
 adapter_select = pn.widgets.Select(name="Parser Module", options=[
@@ -298,7 +486,9 @@ adapter_select = pn.widgets.Select(name="Parser Module", options=[
 target_input = pn.widgets.TextInput(name="Target Channel / URL", placeholder="e.g. intel_slava")
 add_source_btn = pn.widgets.Button(name="⚡ Inject into Engine", button_type="primary", margin=(20, 5, 5, 5))
 
+
 def hot_swap_source(event):
+
     target = target_input.value.strip()
     sel = adapter_select.value
     
@@ -338,112 +528,17 @@ def hot_swap_source(event):
 
 add_source_btn.on_click(hot_swap_source)
 
-# Telegram login
-auth_event = threading.Event()
-tg_login_btn = pn.widgets.Button(name="🔐 Authorize Telegram Session", button_type="success", width=250)
-
-api_id_input = pn.widgets.TextInput(name="API ID")
-api_hash_input = pn.widgets.PasswordInput(name="API Hash")
-phone_input = pn.widgets.TextInput(name="Phone Number", placeholder="+1234567890")
-
-request_code_btn = pn.widgets.Button(name="1. Request Code", button_type="primary")
-code_input = pn.widgets.TextInput(name="2FA Code", disabled=True, placeholder="Waiting for Telegram...")
-submit_code_btn = pn.widgets.Button(name="2. Submit Code", button_type="success", disabled=True)
-
-def auto_submit_code(event):
-    code = event.new.strip()
-    if len(code) == 5 and code.isdigit():
-        auth_event.set()
-
-code_input.param.watch(auto_submit_code, 'value')
-
-def get_code_callback():
-    def update_ui():
-        code_input.disabled = False
-        submit_code_btn.disabled = False
-        request_code_btn.disabled = True
-        pn.state.notifications.info("Please enter the 5-digit code sent to your Telegram app.")
-    
-    pn.state.execute(update_ui)
-    auth_event.wait()
-    return code_input.value.strip()
-
-def start_auth_process(event):
-    if not api_id_input.value or not api_hash_input.value or not phone_input.value:
-        pn.state.notifications.error("API ID, Hash, and Phone are required!")
-        return
-        
-    auth_event.clear()
-    code_input.value = ""
-    request_code_btn.disabled = True
-    request_code_btn.name = "Requesting..."
-    
-    def worker():
-        try:
-            login_telegram(int(api_id_input.value), api_hash_input.value, phone_input.value, SESSION, get_code_callback)
-            def on_success():
-                pn.state.notifications.success("Authorization complete!")
-                template.close_modal()
-            pn.state.execute(on_success)
-        except Exception as e:
-            error_msg = str(e)
-            pn.state.execute(lambda msg=error_msg: pn.state.notifications.error(f"Login failed: {msg}"))
-        finally:
-            pn.state.execute(reset_login_ui)
-            
-    threading.Thread(target=worker, daemon=True).start()
-
-def reset_login_ui():
-    request_code_btn.name = "1. Request Code"
-    request_code_btn.disabled = False
-    code_input.disabled = True
-    submit_code_btn.disabled = True
-
-def submit_code(event):
-    if code_input.value.strip():
-        auth_event.set()
-    else:
-        pn.state.notifications.error("Please enter the code first.")
-
-request_code_btn.on_click(start_auth_process)
-submit_code_btn.on_click(submit_code)
-
-login_instructions = pn.pane.Markdown("""
-### 🔐 Telegram MTProto Authorization
-**How to get your API credentials:**
-1. Go to [my.telegram.org](https://my.telegram.org) and log in.
-2. Click **API development tools**.
-3. Fill out the form (App title: `OsintXpress`, Short name: `osintxpress`, Platform: `Desktop`).
-4. Click **Create application**.
-5. Paste your new **api_id** and **api_hash** below.
-""")
-
-login_modal = pn.Column(
-    login_instructions,
-    pn.Row(api_id_input, api_hash_input),
-    phone_input,
-    request_code_btn,
-    pn.layout.Divider(),
-    pn.Row(code_input, submit_code_btn)
-)
-
-def show_login_modal(event):
-    template.modal[0].clear()
-    template.modal[0].append(login_modal)
-    template.open_modal()
-    
-tg_login_btn.on_click(show_login_modal)
-
 config_tab = pn.Column(
+    source_manager_panel,
     config_desc, 
+    pn.layout.Divider(),
     pn.Row(adapter_select, target_input, add_source_btn),
     pn.layout.Divider(),
-    pn.pane.Markdown("### 🔑 Authentication"),
-    tg_login_btn, 
     sizing_mode="stretch_both"
 )
 
 ## -- Master template
+##
 
 sticky_tab_style = """
 :host { height: 100%; }
@@ -470,6 +565,7 @@ master_tabs = pn.Tabs(
 
 
 ## -- Background Initializers
+## 
 
 def load_submarine_cables():
     
@@ -496,6 +592,7 @@ def load_submarine_cables():
 
 
 ## -- Polling logic
+##
 
 cached_layers = {}
 cached_counts = {}

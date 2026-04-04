@@ -1,5 +1,7 @@
-import os, sys, importlib.util
+import os, sys, importlib.util, atexit, weakref
 
+
+## -- Load Rust module
 
 def _load_module(module_name: str, path: str):
 
@@ -49,6 +51,7 @@ _rust_lib = _load_rust_pip_or_dev()
 globals().update({k: v for k, v in vars(_rust_lib).items() if not k.startswith('__')})
 
 
+## -- General helper functions
 
 def _to_upper_snake_case(name: str) -> str:
 
@@ -61,14 +64,28 @@ def _to_upper_snake_case(name: str) -> str:
     return "".join(result).upper()
 
 
+def _is_rtl(text):
+    
+    for char in text:
+        if char.isalpha():
+            if 0x0590 <= ord(char) <= 0x06FF:
+                return True
+            return False 
+
+    return False
+
+
+## -- Python wrapping logic
+
 class SourceAdapter:
     pass
 
-_builtins = _rust_lib.sources()
-
-
-for source in _builtins:
+for source in _rust_lib.sources():
     setattr(SourceAdapter, source.name, source)
+
+
+def supported_sources() -> list[str]:
+    return [k for k in dir(SourceAdapter) if not k.startswith('_')]
 
 
 def login_telegram(api_id: int, api_hash: str, phone: str, session_path: str = "osint.session", code_callback=None):
@@ -90,6 +107,40 @@ def login_telegram(api_id: int, api_hash: str, phone: str, session_path: str = "
         print("You can now pass this session file path to engine.add_telegram_source()")
 
 
-def supported_sources() -> list[str]:
+# Keep track of active engines so we can auto-cleanup on hot-reloads/exits
+_active_engines = weakref.WeakSet()
 
-    return [k for k in dir(SourceAdapter) if not k.startswith('_')]
+def cleanup_engines():
+    for engine in _active_engines:
+        print("\n🛑 osintxpress: Gracefully shutting down Rust Engine...")
+        engine.stop_all()
+
+atexit.register(cleanup_engines)
+
+class OsintEngine(_rust_lib.OsintEngine):
+
+    def __init__(self, worker_threads=4):
+
+        super().__init__() # PyO3 consumed 'worker_threads' during __new__ to allocate the Rust memory
+
+        self.source_registry = {}
+        _active_engines.add(self)
+
+
+    def add_rest_source(self, adapter, name=None, url=None, poll_interval_sec=60, headers=None):
+
+        src_name = name or adapter.name.lower()
+        self.source_registry[src_name] = {
+            'adapter': adapter, 'type': 'rest', 'interval': poll_interval_sec, 'headers': headers
+        }
+        # Call down to the Rust FFI
+        super().add_rest_source(adapter, name, url, poll_interval_sec, headers)
+
+
+    def add_ws_source(self, adapter, name=None, url=None, init_message=None):
+
+        src_name = name or adapter.name.lower()
+        self.source_registry[src_name] = {
+            'adapter': adapter, 'type': 'ws', 'interval': None, 'init_message': init_message
+        }
+        super().add_ws_source(adapter, name, url, init_message)
