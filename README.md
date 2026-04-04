@@ -40,6 +40,13 @@ Run `panel serve demo.py`, then open http://localhost:5006/demo
 
  <img width="2281" height="1033" alt="floights" src="https://github.com/user-attachments/assets/36df86f2-30e7-4063-946c-d39fe296cf9b" />
 
+## Dashboard
+
+`osintxpress` comes with a complementary [dashboard](https://github.com/h5rdly/osintxpress/blob/main/osintxpress/dashboard.py). Used for testing, tweaking etc., it can provide a starting point for Python dashboard builders.
+
+<img width="2437" height="1009" alt="dash" src="https://github.com/user-attachments/assets/1ce4bbac-4eaa-4774-9be7-24a9671c9f2e" />
+
+
 ## Supported Sources
 osintxpress natively polls / streams from  - 
 
