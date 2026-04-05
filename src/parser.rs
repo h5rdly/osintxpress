@@ -9,7 +9,6 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserType {
 
-    // Non vanilla parsers
     Binance,
     AisStream,
     Telegram,
@@ -27,8 +26,6 @@ pub enum ParserType {
     Nws,
     Bbc,
     AlJazeera,
-
-    // Vanilla
     Polymarket,
     CloudflareRadar,
     NasaFirms,
@@ -36,6 +33,8 @@ pub enum ParserType {
     FeodoTracker,
     RansomwareLive,
     NgaWarnings,
+    Unhcr,     
+    Celestrak,
 }
 
 
@@ -63,7 +62,6 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::Telegram        => Box::new(TelegramParser),
         ParserType::GoogleNewsReuters | ParserType::Nws | ParserType::Bbc | ParserType::AlJazeera 
             => Box::new(RssParser),
-
         ParserType::Polymarket      => Box::new(PolymarketParser),
         ParserType::CloudflareRadar => Box::new(CloudflareRadarParser),
         ParserType::NasaFirms       => Box::new(NasaFirmsParser),
@@ -71,6 +69,8 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::FeodoTracker    => Box::new(FeodoTrackerParser),
         ParserType::RansomwareLive  => Box::new(RansomwareLiveParser),
         ParserType::NgaWarnings     => Box::new(NgaWarningsParser),
+        ParserType::Unhcr           => Box::new(UnhcrParser),       
+        ParserType::Celestrak       => Box::new(CelestrakParser),   
         
     }
 }
@@ -114,7 +114,6 @@ macro_rules! define_manual_parser {
 
 // -- Manual parser implementations
 
-// Vanilla
 
 define_manual_parser!(
     PolymarketParser,
@@ -259,8 +258,6 @@ define_manual_parser!(
     }
 );
 
-
-// Non vanilla
 
 define_manual_parser!(
     AisStreamParser,
@@ -563,6 +560,53 @@ define_manual_parser!(
         }
     }
 );
+
+
+define_manual_parser!(
+    UnhcrParser,
+    fields: [
+        ("origin", origin, Utf8, StringBuilder),
+        ("destination", destination, Utf8, StringBuilder),
+        ("population", population, Int64, Int64Builder),
+        ("date", date, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, origin, destination, population, date| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            // UNHCR usually nests data under "items" or "data"
+            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                for item in items {
+                    origin.append_option(item.get("origin").and_then(|v| v.as_str()));
+                    destination.append_option(item.get("destination").and_then(|v| v.as_str()));
+                    population.append_option(item.get("population").and_then(|v| v.as_i64()));
+                    date.append_option(item.get("date").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+
+define_manual_parser!(
+    CelestrakParser,
+    fields: [
+        ("object_name", object_name, Utf8, StringBuilder),
+        ("object_id", object_id, Utf8, StringBuilder),
+        ("epoch", epoch, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, object_name, object_id, epoch| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            // Celestrak is a flat JSON array with ALL_CAPS keys
+            if let Some(items) = json.as_array() {
+                for item in items {
+                    object_name.append_option(item.get("OBJECT_NAME").and_then(|v| v.as_str()));
+                    object_id.append_option(item.get("OBJECT_ID").and_then(|v| v.as_str()));
+                    epoch.append_option(item.get("EPOCH").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
 
 define_manual_parser!(
     RssParser,

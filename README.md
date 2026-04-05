@@ -60,8 +60,12 @@ osintxpress natively polls / streams from  -
 | | **UCDP** | Uppsala Conflict Data Program (Georeferenced events) |
 | | **GDELT** | Global Database of Events, Language, and Tone |
 | | **OREF** | Israel Home Front Command (Real-time rocket/drone alerts) |
+| | **UNHCR** | Refugee and Internally Displaced Person (IDP) population flows |
 | **Cyber & Infrastructure** | **Cloudflare Radar** | Global BGP leaks and route hijacks |
 | | **URLhaus** | Active malware distribution URLs (abuse.ch) |
+| | **Feodo Tracker** | Active Botnet Command & Control (C2) servers (abuse.ch) |
+| | **Ransomware.live**| Recent ransomware group victim postings |
+| | **NGA Warnings** | Maritime navigational warnings (e.g., Submarine cable repairs) |
 | **Natural & Environmental**| **NASA FIRMS** | VIIRS Satellite thermal anomalies (Wildfires & kinetic impacts) |
 | | **NASA EONET** | Earth Observatory Natural Event Tracker |
 | | **USGS** | Global live earthquake feeds |
@@ -73,10 +77,11 @@ osintxpress natively polls / streams from  -
 | | **Binance** | Live crypto trade execution streams (WebSocket) |
 | **Tracking & Telecom** | **OpenSky Network** | Live global ADS-B flight tracking |
 | | **AIS Stream** | Live global maritime shipping positions (WebSocket) |
+| | **CelesTrak** | Active satellite TLE data (Orbital surveillance) |
 | | **Telegram** | Authenticated MTProto channel scraping via `grammers` |
 | **News & Media** | **Google News** | Accelerated proxy for Reuters World News |
 | | **BBC & Al Jazeera** | Breaking world news RSS feeds |
 
 
 ## Suggestions
-Feel free to open a ticket or a discussion!
+Feel free to open a ticket or a discussion.

@@ -88,7 +88,9 @@ pub fn sources() -> Vec<SourceAdapter> {
         src(ParserType::FeodoTracker, "FEODO_TRACKER", "https://feodotracker.abuse.ch/downloads/ipblocklist.json"),
         src(ParserType::RansomwareLive, "RANSOMWARE_LIVE", "https://api.ransomware.live/v2/recentvictims"),
         src(ParserType::NgaWarnings, "NGA_WARNINGS", "https://msi.nga.mil/api/publications/broadcast-warn?output=json"),
-
+        src(ParserType::Unhcr, "UNHCR", "https://api.unhcr.org/population/v1/population/"),
+        src(ParserType::Celestrak, "CELESTRAK", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json"),
+        
     ]
 }
 

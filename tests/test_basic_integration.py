@@ -156,6 +156,16 @@ class TestOsintEngineIntegration(unittest.TestCase):
             json_payload=json.dumps({"broadcast-warn": [{"navArea": "IV", "text": "SUBMARINE CABLE REPAIR OPERATING AT 34N 120W"}]})
         )
 
+        cls.mock_server.add_rest_route(
+            path='/unhcr/population',
+            json_payload=json.dumps({"items": [{"origin": "Syria", "destination": "Turkey", "population": 3500000, "date": "2023"}]})
+        )
+
+        cls.mock_server.add_rest_route(
+            path='/celestrak/tle',
+            json_payload=json.dumps([{"OBJECT_NAME": "ISS (ZARYA)", "OBJECT_ID": "1998-067A", "EPOCH": "2023-10-01T12:00:00"}])
+        )
+
         cls.mock_server.start()
 
 
@@ -256,13 +266,15 @@ class TestOsintEngineIntegration(unittest.TestCase):
         engine.add_rest_source(url=f'{base_url}/oref/alerts', adapter=SourceAdapter.OREF, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/coingecko/price', adapter=SourceAdapter.COINGECKO, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/meteo/current', adapter=SourceAdapter.OPEN_METEO, poll_interval_sec=1)
-       
+        engine.add_rest_source(url=f'{base_url}/unhcr/population', adapter=SourceAdapter.UNHCR, poll_interval_sec=1)
+        engine.add_rest_source(url=f'{base_url}/celestrak/tle', adapter=SourceAdapter.CELESTRAK, poll_interval_sec=1)
+
         engine.start_all()
 
         expected_keys =  ['acled', 'ais_stream', 'opensky', 'gdelt_geojson', 'google_news_reuters', 
         'bbc', 'usgs', 'binance', 'nasa_eonet', 'polymarket', 'cloudflare_radar', 'nasa_firms', 
         'urlhaus', 'fred', 'ucdp', 'oref', 'coingecko', 'open_meteo', 'feodo_tracker', 'ransomware_live', 
-        'nga_warnings']
+        'nga_warnings', 'unhcr', 'celestrak']
 
         data = {}
         for _ in range(20):  
@@ -413,21 +425,40 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert meteo_df['longitude'][0] == 13.41
         assert meteo_df['temperature'][0] == 22.5
 
+        # Check FEODO
         feodo_df = pl.from_arrow(data['feodo_tracker'])
         assert len(feodo_df) >= 1
         assert feodo_df['ip_address'][0] == '192.168.1.1'
         assert feodo_df['malware'][0] == 'QakBot'
 
+        # Check Ransomware
         ransom_df = pl.from_arrow(data['ransomware_live'])
         assert len(ransom_df) >= 1
         assert ransom_df['group_name'][0] == 'LockBit'
         assert ransom_df['victim'][0] == 'MegaCorp'
 
+        # Check NGA
         nga_df = pl.from_arrow(data['nga_warnings'])
         assert len(nga_df) >= 1
         assert nga_df['navArea'][0] == 'IV'
         assert 'SUBMARINE CABLE' in nga_df['text'][0]
         
+        # Check UNHCR
+        unhcr_df = pl.from_arrow(data['unhcr'])
+        assert len(unhcr_df) >= 1
+        assert unhcr_df['origin'][0] == 'Syria'
+        assert unhcr_df['destination'][0] == 'Turkey'
+        assert unhcr_df['population'][0] == 3500000
+        assert unhcr_df['date'][0] == '2023'
+
+        # Check CelesTrak
+        celestrak_df = pl.from_arrow(data['celestrak'])
+        assert len(celestrak_df) >= 1
+        assert celestrak_df['object_name'][0] == 'ISS (ZARYA)'
+        assert celestrak_df['object_id'][0] == '1998-067A'
+        assert celestrak_df['epoch'][0] == '2023-10-01T12:00:00'
+
+
 if __name__ == '__main__':
 
     unittest.main(verbosity=2)
