@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::collections::HashMap;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 use grammers_client::Client as TgClient;
 use grammers_mtsender::SenderPool;
@@ -307,7 +308,18 @@ fn mlt_to_dict<'py>(py: Python<'py>, mlt_bytes: &[u8]) -> PyResult<Bound<'py, Py
 
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let _ = tracing_subscriber::fmt::try_init();
+
+    if let Ok(log_file) = std::fs::OpenOptions::new().create(true).append(true).open("osint.log")
+    {
+        // Wrapped in an Arc so it can be shared across Tokio threads
+        let file_writer = std::sync::Arc::new(log_file);
+        let multi_writer = std::io::stdout.and(file_writer);
+        let _ = tracing_subscriber::fmt()
+            .with_writer(multi_writer)
+            .try_init();
+    } else {
+        let _ = tracing_subscriber::fmt::try_init(); 
+    }
 
     m.add_class::<OsintEngine>()?;
     m.add_class::<mock_server::MockServer>()?; 

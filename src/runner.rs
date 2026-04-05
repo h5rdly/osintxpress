@@ -60,7 +60,7 @@ impl ConnectionRunner for RestRunner {
                         consecutive_errors = 0;
                         if let Ok(text) = String::from_utf8(bytes) {
                             if source_name == "feodo_tracker" || source_name == "ransomware_live" || source_name == "nga_warnings" {
-                                println!("🌐 [NETWORK] Success for '{}': {} bytes fetched", source_name, text.len());
+                                tracing::debug!("🌐 [NETWORK] Success for '{}': {} bytes fetched", source_name, text.len());
                             }
                             let mut guard = buffer.lock().unwrap();
                             let queue = guard.entry(source_name.clone()).or_insert_with(Vec::new);

@@ -1,4 +1,4 @@
-import os, warnings, threading, json, io, base64, atexit, urllib.request
+import os, sys, warnings, threading, json, io, base64, atexit, urllib.request
 from datetime import datetime
 
 import arro3.core as ac
@@ -14,8 +14,26 @@ from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_arti
     fetch_submarine_cables, _is_rtl)
 
 warnings.filterwarnings("ignore", message="No CRS exists on data")
-pn.extension('ipywidgets', 'tabulator', notifications=True, sizing_mode="stretch_width")
+pn.extension('ipywidgets', 'tabulator', 'terminal', notifications=True, sizing_mode="stretch_width")
 
+
+class DualLogger:
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log_file = open(filename, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+# Intercept all print() commands and Python errors
+sys.stdout = DualLogger("osint.log")
+sys.stderr = sys.stdout
 
 
 ## -- Engine setup
@@ -475,6 +493,69 @@ data_tabs = pn.Tabs(
 )
 
 
+## --  Log Viewer
+##
+
+log_btn = pn.widgets.Button(
+    name='📄', 
+    width=40, 
+    height=40, 
+    sizing_mode='fixed', 
+    button_type='default', # Blends better with the dark header
+    margin=(10, 15),
+    align='center'
+)
+
+log_terminal = pn.widgets.Terminal(
+    "Waiting for logs...\n",
+    options={"cursorBlink": False, "theme": {"background": "#0d1117"}},
+    height=500, sizing_mode='stretch_width'
+)
+
+log_modal = pn.Column(
+    pn.pane.Markdown("### 📜 System Terminal\n*Live feed from `osint.log`*"),
+    log_terminal,
+    sizing_mode='stretch_both'
+)
+
+def show_logs(event):
+
+    template.modal[0].clear()
+    template.modal[0].append(log_modal)
+    template.open_modal()
+    tail_logs()
+
+log_btn.on_click(show_logs)
+
+
+_log_position = os.path.getsize("osint.log") if os.path.exists("osint.log") else 0
+
+def tail_logs():
+
+    global _log_position
+    
+    # Only read the disk if the modal is open
+    if len(template.modal[0].objects) > 0 and template.modal[0].objects[0] == log_modal:
+        if os.path.exists("osint.log"):
+            
+            # Handle the case where you delete the log file to clear it
+            current_size = os.path.getsize("osint.log")
+            if current_size < _log_position:
+                _log_position = 0 
+                log_terminal.clear()
+            
+            with open("osint.log", "r", encoding="utf-8", errors="replace") as f:
+                f.seek(_log_position)
+                new_text = f.read()
+                if new_text:
+                    # xterm.js (which powers Panel's terminal) requires \r\n for line breaks
+                    new_text = new_text.replace('\n', '\r\n').replace('\r\r\n', '\r\n')
+                    log_terminal.write(new_text)
+                    _log_position = f.tell()
+
+pn.state.add_periodic_callback(tail_logs, period=1000)
+
+
 ## -- Engine config & login
 ##
 
@@ -545,7 +626,7 @@ sticky_tab_style = """
 .bk-header {
     position: sticky;
     top: 0;
-    z-index: 1000;
+    z-index: 5;
     background-color: var(--design-background-color, #181818);
     border-bottom: 1px solid #333;
     display: flex;
@@ -706,6 +787,7 @@ template = pn.template.FastListTemplate(
     title="OSINTxpress Global Monitor",
     theme="dark",
     header_background="#0d1117",
+    header=[pn.layout.HSpacer(), log_btn],
     main=[master_tabs],
     main_layout=None 
 )

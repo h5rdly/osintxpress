@@ -206,11 +206,10 @@ impl Engine {
             if let Some(source) = sources.get(&name) {
                 match source.parser.parse(&payloads) {
                     Ok(batch) => {
-                        // println!("✅ [RUST PARSE SUCCESS] Source: '{}' | Rows: {}", name, batch.num_rows());
                         parsed_data.insert(name, batch);
                     }
                     Err(e) => {
-                        println!("❌ [RUST PARSE FAILED] Source: '{}' | Error: {}", name, e);
+                        tracing::error!("❌ [RUST PARSE FAILED] Source: '{}' | Error: {}", name, e);
                     }
                 }
             }
