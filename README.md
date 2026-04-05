@@ -47,6 +47,7 @@ Run `panel serve demo.py`, then open http://localhost:5006/demo
 To start the dashboard - 
 
 `panel serve /path/to/dashboard.py`
+
 <img width="2437" height="1009" alt="dash" src="https://github.com/user-attachments/assets/1ce4bbac-4eaa-4774-9be7-24a9671c9f2e" />
 
 
