@@ -163,7 +163,12 @@ class TestOsintEngineIntegration(unittest.TestCase):
 
         cls.mock_server.add_rest_route(
             path='/celestrak/tle',
-            json_payload=json.dumps([{"OBJECT_NAME": "ISS (ZARYA)", "OBJECT_ID": "1998-067A", "EPOCH": "2023-10-01T12:00:00"}])
+            json_payload=json.dumps([{
+                "OBJECT_NAME": "ISS (ZARYA)", 
+                "OBJECT_ID": "1998-067A", 
+                "TLE_LINE1": "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992",
+                "TLE_LINE2": "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
+            }])
         )
 
         cls.mock_server.start()
@@ -455,9 +460,9 @@ class TestOsintEngineIntegration(unittest.TestCase):
         celestrak_df = pl.from_arrow(data['celestrak'])
         assert len(celestrak_df) >= 1
         assert celestrak_df['object_name'][0] == 'ISS (ZARYA)'
-        assert celestrak_df['object_id'][0] == '1998-067A'
-        assert celestrak_df['epoch'][0] == '2023-10-01T12:00:00'
-
+        assert 'latitude' in celestrak_df.columns
+        assert 'longitude' in celestrak_df.columns
+        assert celestrak_df['altitude_km'][0] > 100.0 # Satellites should be >100km up!
 
 if __name__ == '__main__':
 

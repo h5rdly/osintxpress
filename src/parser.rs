@@ -6,6 +6,9 @@ use quick_xml::Reader;
 
 use serde_json::Value;
 
+use crate::satellites;
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserType {
 
@@ -591,16 +594,33 @@ define_manual_parser!(
     fields: [
         ("object_name", object_name, Utf8, StringBuilder),
         ("object_id", object_id, Utf8, StringBuilder),
-        ("epoch", epoch, Utf8, StringBuilder)
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("altitude_km", alt, Float64, Float64Builder)
     ],
-    extract: |payload: &String, object_name, object_id, epoch| {
+    extract: |payload: &String, object_name, object_id, lat, lon, alt| {
+        // Grab the time once per payload
+        let now = chrono::Utc::now().naive_utc();
+        
         if let Ok(json) = serde_json::from_str::<Value>(payload) {
-            // Celestrak is a flat JSON array with ALL_CAPS keys
             if let Some(items) = json.as_array() {
                 for item in items {
-                    object_name.append_option(item.get("OBJECT_NAME").and_then(|v| v.as_str()));
-                    object_id.append_option(item.get("OBJECT_ID").and_then(|v| v.as_str()));
-                    epoch.append_option(item.get("EPOCH").and_then(|v| v.as_str()));
+                    let name_str = item.get("OBJECT_NAME").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let id_str = item.get("OBJECT_ID").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    
+                    let l1 = item.get("TLE_LINE1").and_then(|v| v.as_str());
+                    let l2 = item.get("TLE_LINE2").and_then(|v| v.as_str());
+
+                    if let (Some(line1), Some(line2)) = (l1, l2) {
+                        // Hand off to our dedicated math module
+                        if let Ok(pos) = satellites::compute_satellite_position(name_str, line1, line2, &now) {
+                            object_name.append_value(name_str);
+                            object_id.append_value(id_str);
+                            lat.append_value(pos.latitude);
+                            lon.append_value(pos.longitude);
+                            alt.append_value(pos.altitude_km);
+                        }
+                    }
                 }
             }
         }

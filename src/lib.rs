@@ -17,6 +17,7 @@ mod parser;
 mod runner;
 mod scrape;
 mod telegram;
+mod satellites;
 mod geo;
 mod mlt;
 
@@ -90,7 +91,7 @@ pub fn sources() -> Vec<SourceAdapter> {
         src(ParserType::NgaWarnings, "NGA_WARNINGS", "https://msi.nga.mil/api/publications/broadcast-warn?output=json"),
         src(ParserType::Unhcr, "UNHCR", "https://api.unhcr.org/population/v1/population/"),
         src(ParserType::Celestrak, "CELESTRAK", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json"),
-        
+
     ]
 }
 
