@@ -196,7 +196,13 @@ impl OsintEngine {
     pub fn fetch_telegram_history(&self, target_channel: &str, limit: usize) {
         self.engine.fetch_telegram_history(target_channel.to_string(), limit);
     }
+
+    #[pyo3(signature = (source_name, payloads))]
+    pub fn inject_test_data(&self, source_name: &str, payloads: Vec<String>) {
+        self.engine.inject_test_data(source_name, payloads);
+    }
 }
+
 
 #[pyfunction]
 #[pyo3(signature = (api_id, api_hash, phone, session_path, code_callback))]

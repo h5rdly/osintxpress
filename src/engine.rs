@@ -216,6 +216,15 @@ impl Engine {
         }
         parsed_data
     }
+
+    pub fn inject_test_data(&self, source_name: &str, payloads: Vec<String>) {
+        /* For testing the telegram parser */
+
+        let mut guard = self.buffer.lock().unwrap();
+        let queue = guard.entry(source_name.to_string()).or_insert_with(Vec::new);
+        queue.extend(payloads);
+    }
+
 }
 
 
