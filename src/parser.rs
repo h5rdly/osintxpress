@@ -1,973 +1,656 @@
-use std::sync::Arc;
+use arrow::array::{Float64Builder, Int32Builder, Int64Builder, RecordBatch, StringBuilder};
+use arrow::datatypes::{DataType, Field, Schema};
 
-use serde_json::Value;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use arrow::array::{Float64Builder, Int32Builder, Int64Builder, StringBuilder, RecordBatch};
-use arrow::datatypes::{DataType, Field, Schema};
-
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserType {
+
+    // Non vanilla parsers
     Binance,
     AisStream,
-    
     Telegram,
-
     Acled,
     OpenSky,
     GdeltGeojson,
-    GoogleNewsReuters,
     NasaEonet,
-    Polymarket,
     Usgs,
+    Urlhaus,
+    Fred,
+    Oref,
+    CoinGecko,
+    OpenMeteo,
+    GoogleNewsReuters,
     Nws,
     Bbc,
     AlJazeera,
 
+    // Vanilla
+    Polymarket,
     CloudflareRadar,
     NasaFirms,
-    Urlhaus,
-    Fred,
     Ucdp,
-    Oref,
-    CoinGecko,
-    OpenMeteo,
     FeodoTracker,
     RansomwareLive,
     NgaWarnings,
 }
 
 
-pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
-    match parser_type {
-        ParserType::Binance       => Box::new(BinanceParser),
-        ParserType::AisStream     => Box::new(AisStreamParser),
-        
-        ParserType::Telegram      => Box::new(TelegramParser),
-
-        ParserType::Acled         => Box::new(AcledParser),
-        ParserType::OpenSky       => Box::new(OpenSkyParser),
-        
-        ParserType::GdeltGeojson  => Box::new(GdeltParser), 
-        ParserType::NasaEonet     => Box::new(EonetParser),
-        
-        ParserType::Polymarket    => Box::new(PolymarketParser),
-        ParserType::Usgs          => Box::new(UsgsParser),
-        
-        ParserType::GoogleNewsReuters => Box::new(RssParser),
-        ParserType::Nws           => Box::new(RssParser),
-        ParserType::Bbc           => Box::new(RssParser),
-        ParserType::AlJazeera     => Box::new(RssParser),
-
-        ParserType::CloudflareRadar => Box::new(CloudflareRadarParser),
-        ParserType::NasaFirms       => Box::new(NasaFirmsParser),
-        ParserType::Urlhaus         => Box::new(UrlhausParser),
-        ParserType::Fred      => Box::new(FredParser),
-        ParserType::Ucdp      => Box::new(UcdpParser),
-        ParserType::Oref      => Box::new(OrefParser),
-        ParserType::CoinGecko => Box::new(CoinGeckoParser),
-        ParserType::OpenMeteo => Box::new(OpenMeteoParser),
-        ParserType::FeodoTracker  => Box::new(FeodoParser),
-        ParserType::RansomwareLive => Box::new(RansomwareLiveParser),
-        ParserType::NgaWarnings   => Box::new(NgaParser),
-
-    }
-
-}
-
-
-// -- Parser Trait and implementations
+//-- PARSER & ROUTING
 
 pub trait SourceParser: Send + Sync {
     fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String>;
 }
 
 
-pub struct AisStreamParser;
-impl SourceParser for AisStreamParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut mmsi_builder = Int64Builder::new();
-        let mut name_builder = StringBuilder::new();
-        let mut lat_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut speed_builder = Float64Builder::new();
-        let mut heading_builder = Float64Builder::new();
+pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
+    match parser_type {
+        ParserType::Binance         => Box::new(BinanceParser),
+        ParserType::AisStream       => Box::new(AisStreamParser),
+        ParserType::Acled           => Box::new(AcledParser),
+        ParserType::OpenSky         => Box::new(OpenSkyParser),
+        ParserType::GdeltGeojson    => Box::new(GdeltParser), 
+        ParserType::NasaEonet       => Box::new(EonetParser),
+        ParserType::Usgs            => Box::new(UsgsParser),
+        ParserType::Urlhaus         => Box::new(UrlhausParser),
+        ParserType::Fred            => Box::new(FredParser),
+        ParserType::Oref            => Box::new(OrefParser),
+        ParserType::CoinGecko       => Box::new(CoinGeckoParser),
+        ParserType::OpenMeteo       => Box::new(OpenMeteoParser),
+        ParserType::Telegram        => Box::new(TelegramParser),
+        ParserType::GoogleNewsReuters | ParserType::Nws | ParserType::Bbc | ParserType::AlJazeera 
+            => Box::new(RssParser),
 
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
-                // AisStream puts the identity and location fields in "MetaData"
-                let meta = json.get("MetaData");
-                
-                mmsi_builder.append_option(meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()));
-                name_builder.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
-                lat_builder.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
-                lon_builder.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
-
-                let report = json.get("Message").and_then(|m| m.get("PositionReport"));
-                speed_builder.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
-                heading_builder.append_option(report.and_then(|r| r.get("TrueHeading")).and_then(|v| v.as_f64()));
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("mmsi", DataType::Int64, true),
-            Field::new("name", DataType::Utf8, true),
-            Field::new("latitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("speed", DataType::Float64, true),
-            Field::new("heading", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(mmsi_builder.finish()),
-                Arc::new(name_builder.finish()),
-                Arc::new(lat_builder.finish()),
-                Arc::new(lon_builder.finish()),
-                Arc::new(speed_builder.finish()),
-                Arc::new(heading_builder.finish()),
-            ],
-        ).map_err(|e| format!("Failed to build AIS RecordBatch: {}", e))
-    }
-}
-
-
-pub struct AcledParser;
-impl SourceParser for AcledParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = StringBuilder::new();
-        let mut type_builder = StringBuilder::new();
-        let mut lat_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut fat_builder = Int32Builder::new();
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                    for item in data {
-                        id_builder.append_option(item.get("event_id_cnty").and_then(|v| v.as_str()));
-                        type_builder.append_option(item.get("event_type").and_then(|v| v.as_str()));
-
-                        // ACLED returns coordinates and fatalities as strings
-                        if let Some(lat_str) = item.get("latitude").and_then(|v| v.as_str()) {
-                            lat_builder.append_option(lat_str.parse::<f64>().ok());
-                        } else {
-                            lat_builder.append_null();
-                        }
-
-                        if let Some(lon_str) = item.get("longitude").and_then(|v| v.as_str()) {
-                            lon_builder.append_option(lon_str.parse::<f64>().ok());
-                        } else {
-                            lon_builder.append_null();
-                        }
-
-                        if let Some(fat_str) = item.get("fatalities").and_then(|v| v.as_str()) {
-                            fat_builder.append_option(fat_str.parse::<i32>().ok());
-                        } else {
-                            fat_builder.append_null();
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("event_id_cnty", DataType::Utf8, true),
-            Field::new("event_type", DataType::Utf8, true),
-            Field::new("latitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("fatalities", DataType::Int32, true),
-        ]));
-
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(id_builder.finish()),
-                Arc::new(type_builder.finish()),
-                Arc::new(lat_builder.finish()),
-                Arc::new(lon_builder.finish()),
-                Arc::new(fat_builder.finish()),
-            ],
-        ).map_err(|e| format!("Failed to build ACLED RecordBatch: {}", e))
-    }
-}
-
-
-pub struct OpenSkyParser;
-impl SourceParser for OpenSkyParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut icao24_builder = StringBuilder::new();
-        let mut callsign_builder = StringBuilder::new();
-        let mut origin_country_builder = StringBuilder::new();
-        let mut time_position_builder = Int64Builder::new();
-        let mut last_contact_builder = Int64Builder::new();
-        let mut longitude_builder = Float64Builder::new();
-        let mut latitude_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(states_array) = val.get("states").and_then(|s| s.as_array()) {
-                    for state in states_array {
-                        if let Some(arr) = state.as_array() {
-                            icao24_builder.append_option(arr.get(0).and_then(|v| v.as_str()));
-                            callsign_builder.append_option(arr.get(1).and_then(|v| v.as_str()).map(|s| s.trim()));
-                            origin_country_builder.append_option(arr.get(2).and_then(|v| v.as_str()));
-                            time_position_builder.append_option(arr.get(3).and_then(|v| v.as_i64()));
-                            last_contact_builder.append_option(arr.get(4).and_then(|v| v.as_i64()));
-                            longitude_builder.append_option(arr.get(5).and_then(|v| v.as_f64()));
-                            latitude_builder.append_option(arr.get(6).and_then(|v| v.as_f64()));
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("icao24", DataType::Utf8, true),
-            Field::new("callsign", DataType::Utf8, true),
-            Field::new("origin_country", DataType::Utf8, true),
-            Field::new("time_position", DataType::Int64, true),
-            Field::new("last_contact", DataType::Int64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("latitude", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(icao24_builder.finish()),
-            Arc::new(callsign_builder.finish()),
-            Arc::new(origin_country_builder.finish()),
-            Arc::new(time_position_builder.finish()),
-            Arc::new(last_contact_builder.finish()),
-            Arc::new(longitude_builder.finish()),
-            Arc::new(latitude_builder.finish()),
-        ]).map_err(|e| format!("Failed to build OpenSky batch: {}", e))
-    }
-}
-
-
-pub struct GdeltParser;
-impl SourceParser for GdeltParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut name_builder = StringBuilder::new();
-        let mut url_builder = StringBuilder::new();
-        let mut longitude_builder = Float64Builder::new();
-        let mut latitude_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(features) = val.get("features").and_then(|f| f.as_array()) {
-                    for feature in features {
-                        if let Some(props) = feature.get("properties") {
-                            name_builder.append_option(props.get("name").and_then(|v| v.as_str()));
-                            url_builder.append_option(props.get("url").and_then(|v| v.as_str()));
-                        } else {
-                            name_builder.append_null();
-                            url_builder.append_null();
-                        }
-
-                        if let Some(coords) = feature.get("geometry").and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
-                            longitude_builder.append_option(coords.get(0).and_then(|v| v.as_f64()));
-                            latitude_builder.append_option(coords.get(1).and_then(|v| v.as_f64()));
-                        } else {
-                            longitude_builder.append_null();
-                            latitude_builder.append_null();
-                        }
-                    }
-                }
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, true),
-            Field::new("url", DataType::Utf8, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("latitude", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(name_builder.finish()),
-            Arc::new(url_builder.finish()),
-            Arc::new(longitude_builder.finish()),
-            Arc::new(latitude_builder.finish()),
-        ]).map_err(|e| format!("Failed to build GDELT batch: {}", e))
-    }
-}
-
-
-pub struct UsgsParser;
-impl SourceParser for UsgsParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut place_builder = StringBuilder::new();
-        let mut mag_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut lat_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(features) = val.get("features").and_then(|f| f.as_array()) {
-                    for feature in features {
-                        if let Some(props) = feature.get("properties") {
-                            place_builder.append_option(props.get("place").and_then(|v| v.as_str()));
-                            mag_builder.append_option(props.get("mag").and_then(|v| v.as_f64()));
-                        } else {
-                            place_builder.append_null();
-                            mag_builder.append_null();
-                        }
-
-                        if let Some(coords) = feature.get("geometry").and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
-                            lon_builder.append_option(coords.get(0).and_then(|v| v.as_f64()));
-                            lat_builder.append_option(coords.get(1).and_then(|v| v.as_f64()));
-                        } else {
-                            lon_builder.append_null();
-                            lat_builder.append_null();
-                        }
-                    }
-                }
-            }
-        }
+        ParserType::Polymarket      => Box::new(PolymarketParser),
+        ParserType::CloudflareRadar => Box::new(CloudflareRadarParser),
+        ParserType::NasaFirms       => Box::new(NasaFirmsParser),
+        ParserType::Ucdp            => Box::new(UcdpParser),
+        ParserType::FeodoTracker    => Box::new(FeodoTrackerParser),
+        ParserType::RansomwareLive  => Box::new(RansomwareLiveParser),
+        ParserType::NgaWarnings     => Box::new(NgaWarningsParser),
         
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("place", DataType::Utf8, true),
-            Field::new("magnitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("latitude", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(place_builder.finish()),
-            Arc::new(mag_builder.finish()),
-            Arc::new(lon_builder.finish()),
-            Arc::new(lat_builder.finish()),
-        ]).map_err(|e| format!("Failed to build USGS batch: {}", e))
     }
 }
 
 
-pub struct BinanceParser;
-impl SourceParser for BinanceParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut price_builder = Float64Builder::new();
-        let mut qty_builder = Float64Builder::new();
 
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                // Binance returns price and quantity as strings in the JSON
-                if let Some(p_str) = val.get("p").and_then(|v| v.as_str()) {
-                    price_builder.append_option(p_str.parse::<f64>().ok());
-                } else {
-                    price_builder.append_null();
-                }
+// -- IDE-friendly manual parser macro
+
+macro_rules! define_manual_parser {
+    (
+        $struct_name:ident,
+        fields: [ $( ($col_name:expr, $var_name:ident, $arr_type:ident, $builder_type:ident) ),* $(,)? ],
+        extract: $extract_logic:expr
+    ) => {
+        pub struct $struct_name;
+        impl SourceParser for $struct_name {
+            fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+                $( let mut $var_name = $builder_type::new(); )*
+
+                // Explicitly tell Rust the types of the closure arguments
+                let extractor: fn(&String, $( &mut $builder_type ),*) = $extract_logic;
                 
-                if let Some(q_str) = val.get("q").and_then(|v| v.as_str()) {
-                    qty_builder.append_option(q_str.parse::<f64>().ok());
-                } else {
-                    qty_builder.append_null();
+                for payload in payloads {
+                    extractor(payload, $( &mut $var_name ),*);
                 }
+
+                // Build Schema and RecordBatch
+                let schema = std::sync::Arc::new(Schema::new(vec![
+                    $( Field::new($col_name, DataType::$arr_type, true) ),*
+                ]));
+
+                RecordBatch::try_new(
+                    schema, 
+                    vec![ $( std::sync::Arc::new($var_name.finish()) as std::sync::Arc<dyn arrow::array::Array> ),* ]
+                ).map_err(|e| format!("Failed to build batch for {}: {}", stringify!($struct_name), e))
             }
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("price", DataType::Float64, true),
-            Field::new("quantity", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(price_builder.finish()),
-            Arc::new(qty_builder.finish()),
-        ]).map_err(|e| format!("Failed to build Binance batch: {}", e))
-    }
+    };
 }
 
 
-pub struct EonetParser;
-impl SourceParser for EonetParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut title_builder = StringBuilder::new();
-        let mut cat_builder = StringBuilder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut lat_builder = Float64Builder::new();
+// -- Manual parser implementations
 
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(events) = val.get("events").and_then(|e| e.as_array()) {
-                    for event in events {
-                        title_builder.append_option(event.get("title").and_then(|v| v.as_str()));
-                        
-                        if let Some(cats) = event.get("categories").and_then(|c| c.as_array()) {
-                            cat_builder.append_option(cats.get(0).and_then(|c| c.get("title")).and_then(|v| v.as_str()));
-                        } else {
-                            cat_builder.append_null();
-                        }
+// Vanilla
 
-                        if let Some(geoms) = event.get("geometry").and_then(|g| g.as_array()) {
-                            if let Some(coords) = geoms.get(0).and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
-                                lon_builder.append_option(coords.get(0).and_then(|v| v.as_f64()));
-                                lat_builder.append_option(coords.get(1).and_then(|v| v.as_f64()));
-                            } else {
-                                lon_builder.append_null(); lat_builder.append_null();
-                            }
-                        } else {
-                            lon_builder.append_null(); lat_builder.append_null();
-                        }
+define_manual_parser!(
+    PolymarketParser,
+    fields: [
+        ("title", title, Utf8, StringBuilder),
+        ("volume", volume, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, title, volume| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.as_array() {
+                for event in events {
+                    title.append_option(event.get("title").and_then(|v| v.as_str()));
+                    volume.append_option(event.get("volume").and_then(|v| v.as_f64()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    CloudflareRadarParser,
+    fields: [
+        ("asn", asn, Int64, Int64Builder),
+        ("leak_type", leak_type, Utf8, StringBuilder),
+        ("country_code", country_code, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, asn, leak_type, country_code| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.pointer("/result/events").and_then(|e| e.as_array()) {
+                for event in events {
+                    asn.append_option(event.get("asn").and_then(|v| v.as_i64()));
+                    leak_type.append_option(event.get("leak_type").and_then(|v| v.as_str()));
+                    country_code.append_option(event.get("country_code").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    NasaFirmsParser,
+    fields: [
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("brightness", bright, Float64, Float64Builder),
+        ("confidence", conf, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, lat, lon, bright, conf| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.as_array() {
+                for event in events {
+                    lat.append_option(event.get("latitude").and_then(|v| v.as_f64()));
+                    lon.append_option(event.get("longitude").and_then(|v| v.as_f64()));
+                    // Alias handling is natively simple! Just look for "bright_ti4"
+                    bright.append_option(event.get("bright_ti4").and_then(|v| v.as_f64()));
+                    conf.append_option(event.get("confidence").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    UcdpParser,
+    fields: [
+        ("id", id, Int64, Int64Builder),
+        ("conflict_name", conflict_name, Utf8, StringBuilder),
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("deaths", deaths, Int32, Int32Builder)
+    ],
+    extract: |payload: &String, id, conflict_name, lat, lon, deaths| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.pointer("/Result").and_then(|e| e.as_array()) {
+                for event in events {
+                    id.append_option(event.get("id").and_then(|v| v.as_i64()));
+                    conflict_name.append_option(event.get("conflict_name").and_then(|v| v.as_str()));
+                    lat.append_option(event.get("latitude").and_then(|v| v.as_f64()));
+                    lon.append_option(event.get("longitude").and_then(|v| v.as_f64()));
+                    deaths.append_option(event.get("best").and_then(|v| v.as_i64()).map(|d| d as i32));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    FeodoTrackerParser,
+    fields: [
+        ("ip_address", ip, Utf8, StringBuilder),
+        ("port", port, Int32, Int32Builder),
+        ("malware", malware, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, ip, port, malware| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.as_array() {
+                for event in events {
+                    ip.append_option(event.get("ip_address").and_then(|v| v.as_str()));
+                    port.append_option(event.get("port").and_then(|v| v.as_i64()).map(|p| p as i32));
+                    malware.append_option(event.get("malware").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    RansomwareLiveParser,
+    fields: [
+        ("group_name", group_name, Utf8, StringBuilder),
+        ("victim", victim, Utf8, StringBuilder),
+        ("published", published, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, group_name, victim, published| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.as_array() {
+                for event in events {
+                    group_name.append_option(event.get("group_name").and_then(|v| v.as_str()));
+                    victim.append_option(event.get("post_title").and_then(|v| v.as_str()));
+                    published.append_option(event.get("published").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    NgaWarningsParser,
+    fields: [
+        ("navArea", nav_area, Utf8, StringBuilder),
+        ("text", text, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, nav_area, text| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = json.pointer("/broadcast-warn").and_then(|e| e.as_array()) {
+                for event in events {
+                    nav_area.append_option(event.get("navArea").and_then(|v| v.as_str()));
+                    text.append_option(event.get("text").and_then(|v| v.as_str()));
+                }
+            }
+        }
+    }
+);
+
+
+// Non vanilla
+
+define_manual_parser!(
+    AisStreamParser,
+    fields: [
+        ("mmsi", mmsi, Int64, Int64Builder),
+        ("name", name, Utf8, StringBuilder),
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("speed", speed, Float64, Float64Builder),
+        ("heading", heading, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, mmsi, name, lat, lon, speed, heading| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            let meta = json.get("MetaData");
+            mmsi.append_option(meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()));
+            name.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
+            lat.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
+            lon.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
+
+            let report = json.get("Message").and_then(|m| m.get("PositionReport"));
+            speed.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
+            heading.append_option(report.and_then(|r| r.get("TrueHeading")).and_then(|v| v.as_f64()));
+        }
+    }
+);
+
+define_manual_parser!(
+    BinanceParser,
+    fields: [
+        ("price", price, Float64, Float64Builder),
+        ("quantity", quantity, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, price, quantity| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            price.append_option(val.get("p").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()));
+            quantity.append_option(val.get("q").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()));
+        }
+    }
+);
+
+define_manual_parser!(
+    AcledParser,
+    fields: [
+        ("event_id_cnty", id, Utf8, StringBuilder),
+        ("event_type", event_type, Utf8, StringBuilder),
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("fatalities", fat, Int32, Int32Builder)
+    ],
+    extract: |payload: &String, id, event_type, lat, lon, fat| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                for item in data {
+                    id.append_option(item.get("event_id_cnty").and_then(|v| v.as_str()));
+                    event_type.append_option(item.get("event_type").and_then(|v| v.as_str()));
+                    lat.append_option(item.get("latitude").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()));
+                    lon.append_option(item.get("longitude").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()));
+                    fat.append_option(item.get("fatalities").and_then(|v| v.as_str()).and_then(|s| s.parse::<i32>().ok()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    OpenSkyParser,
+    fields: [
+        ("icao24", icao24, Utf8, StringBuilder),
+        ("callsign", callsign, Utf8, StringBuilder),
+        ("origin_country", origin_country, Utf8, StringBuilder),
+        ("time_position", time_position, Int64, Int64Builder),
+        ("last_contact", last_contact, Int64, Int64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("latitude", lat, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, icao24, callsign, origin_country, time_position, last_contact, lon, lat| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            if let Some(states) = val.get("states").and_then(|s| s.as_array()) {
+                for state in states {
+                    if let Some(arr) = state.as_array() {
+                        icao24.append_option(arr.get(0).and_then(|v| v.as_str()));
+                        callsign.append_option(arr.get(1).and_then(|v| v.as_str()).map(|s| s.trim()));
+                        origin_country.append_option(arr.get(2).and_then(|v| v.as_str()));
+                        time_position.append_option(arr.get(3).and_then(|v| v.as_i64()));
+                        last_contact.append_option(arr.get(4).and_then(|v| v.as_i64()));
+                        lon.append_option(arr.get(5).and_then(|v| v.as_f64()));
+                        lat.append_option(arr.get(6).and_then(|v| v.as_f64()));
                     }
                 }
             }
         }
-        
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("title", DataType::Utf8, true),
-            Field::new("category", DataType::Utf8, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("latitude", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(title_builder.finish()),
-            Arc::new(cat_builder.finish()),
-            Arc::new(lon_builder.finish()),
-            Arc::new(lat_builder.finish()),
-        ]).map_err(|e| format!("Failed to build EONET batch: {}", e))
     }
-}
+);
 
-
-pub struct PolymarketParser;
-impl SourceParser for PolymarketParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut title_builder = StringBuilder::new();
-        let mut volume_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(events) = val.as_array() {
-                    for event in events {
-                        title_builder.append_option(event.get("title").and_then(|v| v.as_str()));
-                        volume_builder.append_option(event.get("volume").and_then(|v| v.as_f64()));
+define_manual_parser!(
+    GdeltParser,
+    fields: [
+        ("name", name, Utf8, StringBuilder),
+        ("url", url, Utf8, StringBuilder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("latitude", lat, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, name, url, lon, lat| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            if let Some(features) = val.get("features").and_then(|f| f.as_array()) {
+                for feature in features {
+                    if let Some(props) = feature.get("properties") {
+                        name.append_option(props.get("name").and_then(|v| v.as_str()));
+                        url.append_option(props.get("url").and_then(|v| v.as_str()));
+                    } else {
+                        name.append_null(); url.append_null();
+                    }
+                    if let Some(coords) = feature.get("geometry").and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
+                        lon.append_option(coords.get(0).and_then(|v| v.as_f64()));
+                        lat.append_option(coords.get(1).and_then(|v| v.as_f64()));
+                    } else {
+                        lon.append_null(); lat.append_null();
                     }
                 }
             }
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("title", DataType::Utf8, true),
-            Field::new("volume", DataType::Float64, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(title_builder.finish()),
-            Arc::new(volume_builder.finish()),
-        ]).map_err(|e| format!("Failed to build Polymarket batch: {}", e))
     }
-}
+);
 
+define_manual_parser!(
+    EonetParser,
+    fields: [
+        ("title", title, Utf8, StringBuilder),
+        ("category", cat, Utf8, StringBuilder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("latitude", lat, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, title, cat, lon, lat| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            if let Some(events) = val.get("events").and_then(|e| e.as_array()) {
+                for event in events {
+                    title.append_option(event.get("title").and_then(|v| v.as_str()));
+                    if let Some(cats) = event.get("categories").and_then(|c| c.as_array()) {
+                        cat.append_option(cats.get(0).and_then(|c| c.get("title")).and_then(|v| v.as_str()));
+                    } else { cat.append_null(); }
+                    
+                    if let Some(geoms) = event.get("geometry").and_then(|g| g.as_array()) {
+                        if let Some(coords) = geoms.get(0).and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
+                            lon.append_option(coords.get(0).and_then(|v| v.as_f64()));
+                            lat.append_option(coords.get(1).and_then(|v| v.as_f64()));
+                        } else { lon.append_null(); lat.append_null(); }
+                    } else { lon.append_null(); lat.append_null(); }
+                }
+            }
+        }
+    }
+);
 
-pub struct CloudflareRadarParser;
-impl SourceParser for CloudflareRadarParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut asn_builder = Int64Builder::new();
-        let mut type_builder = StringBuilder::new();
-        let mut country_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                // Cloudflare nests events under result -> events
-                if let Some(events) = val.get("result").and_then(|r| r.get("events")).and_then(|e| e.as_array()) {
-                    for event in events {
-                        asn_builder.append_option(event.get("asn").and_then(|v| v.as_i64()));
-                        type_builder.append_option(event.get("leak_type").and_then(|v| v.as_str()));
-                        country_builder.append_option(event.get("country_code").and_then(|v| v.as_str()));
+define_manual_parser!(
+    UsgsParser,
+    fields: [
+        ("place", place, Utf8, StringBuilder),
+        ("magnitude", mag, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("latitude", lat, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, place, mag, lon, lat| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            if let Some(features) = val.get("features").and_then(|f| f.as_array()) {
+                for feature in features {
+                    if let Some(props) = feature.get("properties") {
+                        place.append_option(props.get("place").and_then(|v| v.as_str()));
+                        mag.append_option(props.get("mag").and_then(|v| v.as_f64()));
+                    } else {
+                        place.append_null(); mag.append_null();
+                    }
+                    if let Some(coords) = feature.get("geometry").and_then(|g| g.get("coordinates")).and_then(|c| c.as_array()) {
+                        lon.append_option(coords.get(0).and_then(|v| v.as_f64()));
+                        lat.append_option(coords.get(1).and_then(|v| v.as_f64()));
+                    } else {
+                        lon.append_null(); lat.append_null();
                     }
                 }
             }
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("asn", DataType::Int64, true),
-            Field::new("leak_type", DataType::Utf8, true),
-            Field::new("country_code", DataType::Utf8, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(asn_builder.finish()),
-            Arc::new(type_builder.finish()),
-            Arc::new(country_builder.finish()),
-        ]).map_err(|e| format!("Failed to build Cloudflare Radar batch: {}", e))
     }
-}
+);
 
-
-pub struct NasaFirmsParser;
-impl SourceParser for NasaFirmsParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut lat_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut bright_builder = Float64Builder::new();
-        let mut conf_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                // Assuming a JSON-wrapped FIRMS response for simplicity
-                if let Some(array) = val.as_array() {
-                    for item in array {
-                        lat_builder.append_option(item.get("latitude").and_then(|v| v.as_f64()));
-                        lon_builder.append_option(item.get("longitude").and_then(|v| v.as_f64()));
-                        bright_builder.append_option(item.get("bright_ti4").and_then(|v| v.as_f64()));
-                        conf_builder.append_option(item.get("confidence").and_then(|v| v.as_str()));
-                    }
+define_manual_parser!(
+    UrlhausParser,
+    fields: [
+        ("id", id, Int64, Int64Builder),
+        ("url", url, Utf8, StringBuilder),
+        ("status", status, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, id, url, status| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            if let Some(urls) = val.get("urls").and_then(|u| u.as_array()) {
+                for item in urls {
+                    let parsed_id = item.get("id").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+                    id.append_option(parsed_id);
+                    url.append_option(item.get("url").and_then(|v| v.as_str()));
+                    status.append_option(item.get("url_status").and_then(|v| v.as_str()));
                 }
             }
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("latitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("brightness", DataType::Float64, true),
-            Field::new("confidence", DataType::Utf8, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(lat_builder.finish()),
-            Arc::new(lon_builder.finish()),
-            Arc::new(bright_builder.finish()),
-            Arc::new(conf_builder.finish()),
-        ]).map_err(|e| format!("Failed to build NASA FIRMS batch: {}", e))
     }
-}
+);
 
-
-pub struct UrlhausParser;
-impl SourceParser for UrlhausParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = Int64Builder::new();
-        let mut url_builder = StringBuilder::new();
-        let mut status_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<Value>(payload) {
-                if let Some(urls) = val.get("urls").and_then(|u| u.as_array()) {
-                    for item in urls {
-                        // IDs sometimes come in as strings depending on the abuse.ch endpoint
-                        let id = item.get("id").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
-                        id_builder.append_option(id);
-                        url_builder.append_option(item.get("url").and_then(|v| v.as_str()));
-                        status_builder.append_option(item.get("url_status").and_then(|v| v.as_str()));
-                    }
+define_manual_parser!(
+    FredParser,
+    fields: [
+        ("date", date, Utf8, StringBuilder),
+        ("value", value, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, date, value| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(obs) = json.get("observations").and_then(|o| o.as_array()) {
+                for item in obs {
+                    date.append_option(item.get("date").and_then(|v| v.as_str()));
+                    let val = item.get("value").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
+                    value.append_option(val);
                 }
             }
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, true),
-            Field::new("url", DataType::Utf8, true),
-            Field::new("status", DataType::Utf8, true),
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(id_builder.finish()),
-            Arc::new(url_builder.finish()),
-            Arc::new(status_builder.finish()),
-        ]).map_err(|e| format!("Failed to build URLhaus batch: {}", e))
     }
-}
+);
 
-
-pub struct FredParser;
-impl SourceParser for FredParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut date_builder = StringBuilder::new();
-        let mut value_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<Value>(payload) {
-                if let Some(obs) = json.get("observations").and_then(|o| o.as_array()) {
-                    for item in obs {
-                        date_builder.append_option(item.get("date").and_then(|v| v.as_str()));
-                        // FRED sometimes returns "." for missing data, so we safely parse it
-                        let val = item.get("value").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok());
-                        value_builder.append_option(val);
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("date", DataType::Utf8, true),
-            Field::new("value", DataType::Float64, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(date_builder.finish()), Arc::new(value_builder.finish())])
-            .map_err(|e| format!("Failed to build FRED batch: {}", e))
-    }
-}
-
-pub struct UcdpParser;
-impl SourceParser for UcdpParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = Int64Builder::new();
-        let mut conflict_builder = StringBuilder::new();
-        let mut lat_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut deaths_builder = Int32Builder::new();
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<Value>(payload) {
-                if let Some(results) = json.get("Result").and_then(|r| r.as_array()) {
-                    for item in results {
-                        id_builder.append_option(item.get("id").and_then(|v| v.as_i64()));
-                        conflict_builder.append_option(item.get("conflict_name").and_then(|v| v.as_str()));
-                        lat_builder.append_option(item.get("latitude").and_then(|v| v.as_f64()));
-                        lon_builder.append_option(item.get("longitude").and_then(|v| v.as_f64()));
-                        deaths_builder.append_option(item.get("best").and_then(|v| v.as_i64().map(|d| d as i32)));
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, true),
-            Field::new("conflict_name", DataType::Utf8, true),
-            Field::new("latitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("deaths", DataType::Int32, true),
-        ]));
-        RecordBatch::try_new(schema, vec![
-            Arc::new(id_builder.finish()), Arc::new(conflict_builder.finish()),
-            Arc::new(lat_builder.finish()), Arc::new(lon_builder.finish()), Arc::new(deaths_builder.finish()),
-        ]).map_err(|e| format!("Failed to build UCDP batch: {}", e))
-    }
-}
-
-pub struct OrefParser;
-impl SourceParser for OrefParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = StringBuilder::new();
-        let mut title_builder = StringBuilder::new();
-        let mut cities_builder = StringBuilder::new(); // Flattened array of cities
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<Value>(payload) {
-                // OREF root is the object itself
-                id_builder.append_option(json.get("id").and_then(|v| v.as_str()));
-                title_builder.append_option(json.get("title").and_then(|v| v.as_str()));
-                
-                if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                    let cities: Vec<&str> = data.iter().filter_map(|v| v.as_str()).collect();
-                    cities_builder.append_value(cities.join(", "));
-                } else {
-                    cities_builder.append_null();
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Utf8, true),
-            Field::new("title", DataType::Utf8, true),
-            Field::new("cities", DataType::Utf8, true),
-        ]));
-        RecordBatch::try_new(schema, vec![
-            Arc::new(id_builder.finish()), Arc::new(title_builder.finish()), Arc::new(cities_builder.finish())
-        ]).map_err(|e| format!("Failed to build OREF batch: {}", e))
-    }
-}
-
-pub struct CoinGeckoParser;
-impl SourceParser for CoinGeckoParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut coin_builder = StringBuilder::new();
-        let mut price_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<Value>(payload) {
-                if let Some(obj) = json.as_object() {
-                    for (coin, data) in obj {
-                        coin_builder.append_value(coin);
-                        price_builder.append_option(data.get("usd").and_then(|v| v.as_f64()));
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("coin", DataType::Utf8, true),
-            Field::new("price_usd", DataType::Float64, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(coin_builder.finish()), Arc::new(price_builder.finish())])
-            .map_err(|e| format!("Failed to build CoinGecko batch: {}", e))
-    }
-}
-
-pub struct OpenMeteoParser;
-impl SourceParser for OpenMeteoParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut lat_builder = Float64Builder::new();
-        let mut lon_builder = Float64Builder::new();
-        let mut temp_builder = Float64Builder::new();
-
-        for payload in payloads {
-            if let Ok(json) = serde_json::from_str::<Value>(payload) {
-                lat_builder.append_option(json.get("latitude").and_then(|v| v.as_f64()));
-                lon_builder.append_option(json.get("longitude").and_then(|v| v.as_f64()));
-                temp_builder.append_option(
-                    json.get("current_weather").and_then(|c| c.get("temperature")).and_then(|v| v.as_f64())
-                );
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("latitude", DataType::Float64, true),
-            Field::new("longitude", DataType::Float64, true),
-            Field::new("temperature", DataType::Float64, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(lat_builder.finish()), Arc::new(lon_builder.finish()), Arc::new(temp_builder.finish())])
-            .map_err(|e| format!("Failed to build OpenMeteo batch: {}", e))
-    }
-}
-
-
-
-pub struct FeodoParser;
-impl SourceParser for FeodoParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut ip_builder = StringBuilder::new();
-        let mut port_builder = Int32Builder::new();
-        let mut malware_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(events) = val.as_array() {
-                    for event in events {
-                        ip_builder.append_option(event.get("ip_address").and_then(|v| v.as_str()));
-                        port_builder.append_option(event.get("port").and_then(|v| v.as_i64()).map(|p| p as i32));
-                        malware_builder.append_option(event.get("malware").and_then(|v| v.as_str()));
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("ip_address", DataType::Utf8, true),
-            Field::new("port", DataType::Int32, true),
-            Field::new("malware", DataType::Utf8, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(ip_builder.finish()), Arc::new(port_builder.finish()), Arc::new(malware_builder.finish())])
-            .map_err(|e| format!("Failed to build Feodo batch: {}", e))
-    }
-}
-
-pub struct RansomwareLiveParser;
-impl SourceParser for RansomwareLiveParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut group_builder = StringBuilder::new();
-        let mut victim_builder = StringBuilder::new();
-        let mut date_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(events) = val.as_array() {
-                    for event in events {
-                        group_builder.append_option(event.get("group_name").and_then(|v| v.as_str()));
-                        victim_builder.append_option(event.get("post_title").and_then(|v| v.as_str()));
-                        date_builder.append_option(event.get("published").and_then(|v| v.as_str()));
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("group_name", DataType::Utf8, true),
-            Field::new("victim", DataType::Utf8, true),
-            Field::new("published", DataType::Utf8, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(group_builder.finish()), Arc::new(victim_builder.finish()), Arc::new(date_builder.finish())])
-            .map_err(|e| format!("Failed to build RansomwareLive batch: {}", e))
-    }
-}
-
-pub struct NgaParser;
-impl SourceParser for NgaParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut navarea_builder = StringBuilder::new();
-        let mut text_builder = StringBuilder::new();
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(warnings) = val.get("broadcast-warn").and_then(|w| w.as_array()) {
-                    for warning in warnings {
-                        navarea_builder.append_option(warning.get("navArea").and_then(|v| v.as_str()));
-                        text_builder.append_option(warning.get("text").and_then(|v| v.as_str()));
-                    }
-                }
-            }
-        }
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("navArea", DataType::Utf8, true),
-            Field::new("text", DataType::Utf8, true),
-        ]));
-        RecordBatch::try_new(schema, vec![Arc::new(navarea_builder.finish()), Arc::new(text_builder.finish())])
-            .map_err(|e| format!("Failed to build NGA batch: {}", e))
-    }
-}
-
-
-// -- Telegram
-
-pub struct TelegramParser;
-impl SourceParser for TelegramParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut id_builder = Int64Builder::new();
-        let mut channel_builder = StringBuilder::new();
-        let mut text_builder = StringBuilder::new();
-        let mut date_builder = Int64Builder::new();
-        let mut media_builder = StringBuilder::new(); // (Might need arrow::array::StringBuilder depending on your imports)
-
-        for payload in payloads {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
-                
-                id_builder.append_option(val.get("message_id").and_then(|v| v.as_i64()));
-                channel_builder.append_option(val.get("channel").and_then(|v| v.as_str()));
-                text_builder.append_option(val.get("text").and_then(|v| v.as_str()));
-                date_builder.append_option(val.get("date").and_then(|v| v.as_i64()));
-
-                if let Some(media) = val.get("media").and_then(|v| v.as_str()) {
-                    media_builder.append_value(media);
-                } else { 
-                    media_builder.append_value(""); 
-                }
-            }
-        }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("message_id", DataType::Int64, true),
-            Field::new("channel", DataType::Utf8, true),
-            Field::new("text", DataType::Utf8, true),
-            Field::new("date", DataType::Int64, true),
-            Field::new("media", DataType::Utf8, true),
-        ]));
-
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(id_builder.finish()),
-                Arc::new(channel_builder.finish()),
-                Arc::new(text_builder.finish()),
-                Arc::new(date_builder.finish()),
-                Arc::new(media_builder.finish()), 
-            ],
-        ).map_err(|e| format!("Failed to build Telegram batch: {}", e))
-    }
-}
-
-
-// -- RSS
-
-pub struct RssParser;
-impl SourceParser for RssParser {
-    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
-        let mut title_builder = StringBuilder::new();
-        let mut link_builder = StringBuilder::new();
-        let mut pubdate_builder = StringBuilder::new();
-        let mut desc_builder = StringBuilder::new();
-        
-        let mut meta_builder = StringBuilder::new(); 
-
-        for payload in payloads {
-            let mut reader = Reader::from_str(payload);
-            reader.config_mut().trim_text(true);
-
-            let mut buf = Vec::new();
-            let mut in_item = false;
-            let mut current_tag = String::new();
+define_manual_parser!(
+    OrefParser,
+    fields: [
+        ("id", id, Utf8, StringBuilder),
+        ("title", title, Utf8, StringBuilder),
+        ("cities", cities, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, id, title, cities| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            id.append_option(json.get("id").and_then(|v| v.as_str()));
+            title.append_option(json.get("title").and_then(|v| v.as_str()));
             
-            let mut temp_title = String::new();
-            let mut temp_link = String::new();
-            let mut temp_pubdate = String::new();
-            let mut temp_desc = String::new();
-            
-            // A temporary JSON map to hold all the unknown tags
-            let mut temp_meta = serde_json::Map::new();
+            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                let c_list: Vec<&str> = data.iter().filter_map(|v| v.as_str()).collect();
+                cities.append_value(c_list.join(", "));
+            } else {
+                cities.append_null();
+            }
+        }
+    }
+);
 
-            loop {
-                match reader.read_event_into(&mut buf) {
-                    Ok(Event::Start(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
-                        if tag_name == "item" {
-                            in_item = true;
-                            temp_title.clear();
-                            temp_link.clear();
-                            temp_pubdate.clear();
-                            temp_desc.clear();
-                            temp_meta.clear(); 
-                        }
-                        current_tag = tag_name;
+define_manual_parser!(
+    CoinGeckoParser,
+    fields: [
+        ("coin", coin, Utf8, StringBuilder),
+        ("price_usd", price, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, coin, price| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(obj) = json.as_object() {
+                for (k, data) in obj {
+                    coin.append_value(k);
+                    price.append_option(data.get("usd").and_then(|v| v.as_f64()));
+                }
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    OpenMeteoParser,
+    fields: [
+        ("latitude", lat, Float64, Float64Builder),
+        ("longitude", lon, Float64, Float64Builder),
+        ("temperature", temp, Float64, Float64Builder)
+    ],
+    extract: |payload: &String, lat, lon, temp| {
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            lat.append_option(json.get("latitude").and_then(|v| v.as_f64()));
+            lon.append_option(json.get("longitude").and_then(|v| v.as_f64()));
+            temp.append_option(json.get("current_weather").and_then(|c| c.get("temperature")).and_then(|v| v.as_f64()));
+        }
+    }
+);
+
+define_manual_parser!(
+    TelegramParser,
+    fields: [
+        ("message_id", id, Int64, Int64Builder),
+        ("channel", channel, Utf8, StringBuilder),
+        ("text", text, Utf8, StringBuilder),
+        ("date", date, Int64, Int64Builder),
+        ("media", media, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, id, channel, text, date, media| {
+        if let Ok(val) = serde_json::from_str::<Value>(payload) {
+            id.append_option(val.get("message_id").and_then(|v| v.as_i64()));
+            channel.append_option(val.get("channel").and_then(|v| v.as_str()));
+            text.append_option(val.get("text").and_then(|v| v.as_str()));
+            date.append_option(val.get("date").and_then(|v| v.as_i64()));
+            if let Some(m) = val.get("media").and_then(|v| v.as_str()) {
+                media.append_value(m);
+            } else {
+                media.append_value("");
+            }
+        }
+    }
+);
+
+define_manual_parser!(
+    RssParser,
+    fields: [
+        ("title", title, Utf8, StringBuilder),
+        ("link", link, Utf8, StringBuilder),
+        ("pubDate", pubdate, Utf8, StringBuilder),
+        ("description", desc, Utf8, StringBuilder),
+        ("metadata", meta, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, title, link, pubdate, desc, meta| {
+        let mut reader = Reader::from_str(payload);
+        reader.config_mut().trim_text(true);
+
+        let mut buf = Vec::new();
+        let mut in_item = false;
+        let mut current_tag = String::new();
+        
+        let mut temp_title = String::new();
+        let mut temp_link = String::new();
+        let mut temp_pubdate = String::new();
+        let mut temp_desc = String::new();
+        let mut temp_meta = serde_json::Map::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                    if tag_name == "item" {
+                        in_item = true;
+                        temp_title.clear(); temp_link.clear(); temp_pubdate.clear(); temp_desc.clear(); temp_meta.clear(); 
                     }
-                    Ok(Event::Text(e)) => {
-                        if in_item {
-                            if let Ok(text) = e.unescape() {
-                                let text_str = text.to_string();
-                                match current_tag.as_str() {
-                                    "title" => temp_title.push_str(&text_str),
-                                    "link" => temp_link.push_str(&text_str),
-                                    "pubdate" => temp_pubdate.push_str(&text_str),
-                                    "description" => temp_desc.push_str(&text_str),
-                                    _ if !current_tag.is_empty() => {
-                                        // Save any unknown tag into the JSON map
-                                        temp_meta.insert(current_tag.clone(), serde_json::Value::String(text_str));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    Ok(Event::CData(e)) => {
-                        if in_item {
-                            let text_str = String::from_utf8_lossy(e.as_ref()).to_string();
+                    current_tag = tag_name;
+                }
+                Ok(Event::Text(e)) => {
+                    if in_item {
+                        if let Ok(text) = e.unescape() {
+                            let text_str = text.to_string();
                             match current_tag.as_str() {
                                 "title" => temp_title.push_str(&text_str),
                                 "link" => temp_link.push_str(&text_str),
                                 "pubdate" => temp_pubdate.push_str(&text_str),
                                 "description" => temp_desc.push_str(&text_str),
                                 _ if !current_tag.is_empty() => {
-                                    // Catch-all for CDATA blocks
-                                    temp_meta.insert(current_tag.clone(), serde_json::Value::String(text_str));
+                                    temp_meta.insert(current_tag.clone(), Value::String(text_str));
                                 }
                                 _ => {}
                             }
                         }
                     }
-                    Ok(Event::End(ref e)) => {
-                        let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
-                        if tag_name == "item" {
-                            in_item = false;
-                            title_builder.append_value(temp_title.trim());
-                            link_builder.append_value(temp_link.trim());
-                            pubdate_builder.append_value(temp_pubdate.trim());
-                            desc_builder.append_value(temp_desc.trim());
-                            
-                            let meta_json = serde_json::to_string(&temp_meta).unwrap_or_else(|_| "{}".to_string());
-                            meta_builder.append_value(meta_json);
-                        }
-                        current_tag.clear();
-                    }
-                    Ok(Event::Eof) => break,
-                    Err(e) => {
-                        tracing::error!("XML parsing error: {:?}", e);
-                        break;
-                    }
-                    _ => (),
                 }
-                buf.clear();
+                Ok(Event::CData(e)) => {
+                    if in_item {
+                        let text_str = String::from_utf8_lossy(e.as_ref()).to_string();
+                        match current_tag.as_str() {
+                            "title" => temp_title.push_str(&text_str),
+                            "link" => temp_link.push_str(&text_str),
+                            "pubdate" => temp_pubdate.push_str(&text_str),
+                            "description" => temp_desc.push_str(&text_str),
+                            _ if !current_tag.is_empty() => {
+                                temp_meta.insert(current_tag.clone(), Value::String(text_str));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                    if tag_name == "item" {
+                        in_item = false;
+                        title.append_value(temp_title.trim());
+                        link.append_value(temp_link.trim());
+                        pubdate.append_value(temp_pubdate.trim());
+                        desc.append_value(temp_desc.trim());
+                        
+                        let meta_json = serde_json::to_string(&temp_meta).unwrap_or_else(|_| "{}".to_string());
+                        meta.append_value(meta_json);
+                    }
+                    current_tag.clear();
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => {
+                    tracing::error!("XML parsing error: {:?}", e);
+                    break;
+                }
+                _ => (),
             }
+            buf.clear();
         }
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("title", DataType::Utf8, true),
-            Field::new("link", DataType::Utf8, true),
-            Field::new("pubDate", DataType::Utf8, true),
-            Field::new("description", DataType::Utf8, true),
-            Field::new("metadata", DataType::Utf8, true), 
-        ]));
-
-        RecordBatch::try_new(schema, vec![
-            Arc::new(title_builder.finish()),
-            Arc::new(link_builder.finish()),
-            Arc::new(pubdate_builder.finish()),
-            Arc::new(desc_builder.finish()),
-            Arc::new(meta_builder.finish()), 
-        ]).map_err(|e| format!("Failed to build RSS batch: {}", e))
     }
-}
+);
