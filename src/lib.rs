@@ -275,6 +275,8 @@ fn mlt_to_geojson(mlt_bytes: &[u8]) -> PyResult<String> {
 }
 
 
+// -- Satellite powa
+
 #[pyfunction]
 fn mlt_to_dict<'py>(py: Python<'py>, mlt_bytes: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     
@@ -292,6 +294,29 @@ fn mlt_to_dict<'py>(py: Python<'py>, mlt_bytes: &[u8]) -> PyResult<Bound<'py, Py
     Ok(py_dict)
 }
 
+
+#[pyfunction]
+pub fn compute_orbits(line1s: Vec<String>, line2s: Vec<String>) -> PyResult<(Vec<f64>, Vec<f64>, Vec<f64>)> {
+    let now = chrono::Utc::now().naive_utc();
+    let mut lats = Vec::with_capacity(line1s.len());
+    let mut lons = Vec::with_capacity(line1s.len());
+    let mut alts = Vec::with_capacity(line1s.len());
+
+    for (l1, l2) in line1s.iter().zip(line2s.iter()) {
+        // Call your dedicated satellites.rs math module!
+        if let Ok(pos) = crate::satellites::compute_satellite_position("SAT", l1, l2, &now) {
+            lats.push(pos.latitude);
+            lons.push(pos.longitude);
+            alts.push(pos.altitude_km);
+        } else {
+            // If propagation fails (e.g. decayed orbit), push NaNs so Polars can drop them
+            lats.push(std::f64::NAN);
+            lons.push(std::f64::NAN);
+            alts.push(std::f64::NAN);
+        }
+    }
+    Ok((lats, lons, alts))
+}
 
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -324,6 +349,8 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mlt_to_geojson, m)?)?;
     m.add_function(wrap_pyfunction!(mlt_to_dict, m)?)?; 
 
+    m.add_function(wrap_pyfunction!(compute_orbits, m)?)?;
+    
     m.add("ENGINE_BUFFER_SIZE", engine::ENGINE_BUFFER_SIZE)?;
 
     Ok(())

@@ -6,6 +6,8 @@ sys.path.append(__file__.replace('\\', '/').rsplit('/', 2)[0])
 
 # Notice we now import the unified SourceAdapter instead of RestAdapter/WsAdapter
 from osintxpress import OsintEngine, MockServer, SourceAdapter
+from osintxpress import (OsintEngine, MockServer, SourceAdapter, compute_orbits, 
+    scrape_article, fetch_submarine_cables, )
 
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 
@@ -456,13 +458,24 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert unhcr_df['population'][0] == 3500000
         assert unhcr_df['date'][0] == '2023'
 
-        # Check CelesTrak
+       # Check CelesTrak data ingestion
         celestrak_df = pl.from_arrow(data['celestrak'])
         assert len(celestrak_df) >= 1
         assert celestrak_df['object_name'][0] == 'ISS (ZARYA)'
-        assert 'latitude' in celestrak_df.columns
-        assert 'longitude' in celestrak_df.columns
-        assert celestrak_df['altitude_km'][0] > 100.0 # Satellites should be >100km up!
+        assert celestrak_df['object_id'][0] == '1998-067A'
+        assert 'tle_line1' in celestrak_df.columns
+        assert 'tle_line2' in celestrak_df.columns
+
+        # Check CelesTrak orbital propagation math
+        lats, lons, alts = compute_orbits(
+            celestrak_df['tle_line1'].to_list(),
+            celestrak_df['tle_line2'].to_list()
+        )
+        
+        assert len(lats) == len(celestrak_df)
+        assert lats[0] > -90.0 and lats[0] < 90.0  # Valid latitude bounds
+        assert lons[0] > -180.0 and lons[0] < 180.0 # Valid longitude bounds
+        assert alts[0] > 100.0 # Satellites should be >100km up
 
 if __name__ == '__main__':
 

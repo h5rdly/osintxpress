@@ -30,9 +30,13 @@ class SourceAdapter:
     NASA_EONET = SourceConfig(
         ParserType.NasaEonet, "NASA_EONET", "https://eonet.gsfc.nasa.gov/api/v3/events"
         )
-    CELESTRAK = SourceConfig(
-        ParserType.Celestrak, "CELESTRAK", 
-        "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json"
+    CELESTRAK_MILITARY = SourceConfig(
+        ParserType.Celestrak, "CELESTRAK_MILITARY", 
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=military&FORMAT=json"
+        )
+    CELESTRAK_RESOURCE = SourceConfig(
+        ParserType.Celestrak, "CELESTRAK_RESOURCE", 
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=json"
         )
     OPENSKY = SourceConfig(
         ParserType.OpenSky, "OPENSKY", "https://opensky-network.org/api/states/all"

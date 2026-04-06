@@ -7,7 +7,6 @@ use quick_xml::Reader;
 use serde_json::Value;
 
 use crate::ParserType;
-use crate::satellites;
 
 
 //-- PARSER & ROUTING
@@ -563,33 +562,26 @@ define_manual_parser!(
     fields: [
         ("object_name", object_name, Utf8, StringBuilder),
         ("object_id", object_id, Utf8, StringBuilder),
-        ("latitude", lat, Float64, Float64Builder),
-        ("longitude", lon, Float64, Float64Builder),
-        ("altitude_km", alt, Float64, Float64Builder)
+        ("tle_line1", tle_line1, Utf8, StringBuilder),
+        ("tle_line2", tle_line2, Utf8, StringBuilder)
     ],
-    extract: |payload: &String, object_name, object_id, lat, lon, alt| {
-        // Grab the time once per payload
-        let now = chrono::Utc::now().naive_utc();
-        
+    extract: |payload: &String, object_name, object_id, tle_line1, tle_line2| {
         if let Ok(json) = serde_json::from_str::<Value>(payload) {
             if let Some(items) = json.as_array() {
                 for item in items {
-                    let name_str = item.get("OBJECT_NAME").and_then(|v| v.as_str()).unwrap_or("Unknown");
-                    let id_str = item.get("OBJECT_ID").and_then(|v| v.as_str()).unwrap_or("Unknown");
-                    
                     let l1 = item.get("TLE_LINE1").and_then(|v| v.as_str());
                     let l2 = item.get("TLE_LINE2").and_then(|v| v.as_str());
 
                     if let (Some(line1), Some(line2)) = (l1, l2) {
-                        // Hand off to our dedicated math module
-                        if let Ok(pos) = satellites::compute_satellite_position(name_str, line1, line2, &now) {
-                            object_name.append_value(name_str);
-                            object_id.append_value(id_str);
-                            lat.append_value(pos.latitude);
-                            lon.append_value(pos.longitude);
-                            alt.append_value(pos.altitude_km);
-                        }
+                        let name_str = item.get("OBJECT_NAME").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        let id_str = item.get("OBJECT_ID").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        
+                        object_name.append_value(name_str);
+                        object_id.append_value(id_str);
+                        tle_line1.append_value(line1);
+                        tle_line2.append_value(line2);
                     }
+                    // If l1 or l2 is missing, we do nothing
                 }
             }
         }

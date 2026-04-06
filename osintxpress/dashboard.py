@@ -10,7 +10,7 @@ import lonboard
 from lonboard.basemap import MaplibreBasemap, CartoStyle
 
 # Added scrape_article to our Rust imports!
-from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, 
+from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, compute_orbits,
     fetch_submarine_cables, _is_rtl)
 
 warnings.filterwarnings("ignore", message="No CRS exists on data")
@@ -46,7 +46,8 @@ stealth_headers = {
 }
 
 engine.add_rest_source(SourceAdapter.OPENSKY, poll_interval_sec=5)
-engine.add_rest_source(SourceAdapter.CELESTRAK, poll_interval_sec=5)
+engine.add_rest_source(SourceAdapter.CELESTRAK_MILITARY, poll_interval_sec=10800, headers=stealth_headers)
+engine.add_rest_source(SourceAdapter.CELESTRAK_RESOURCE, poll_interval_sec=10800, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.USGS, poll_interval_sec=15)
 engine.add_rest_source(SourceAdapter.NASA_EONET, poll_interval_sec=30)
 engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
@@ -680,11 +681,59 @@ def load_submarine_cables():
 
 cached_layers = {}
 cached_counts = {}
+cached_tle_df = None
+INTEL_SAT_KEYWORDS = [
+    "YAOGAN", "COSMOS 2", "WORLDVIEW", "SENTINEL", "SKYSAT", "GEOEYE", "RADARSAT", "LUSAIL", "OFK", 
+    "EROS"
+]
 
 def update_dashboard():
 
+    global cached_tle_df
     data = engine.poll()
     
+    if "celestrak_military" in data or "celestrak_resource" in data:
+        dfs = []
+        if "celestrak_military" in data:
+            dfs.append(pl.from_arrow(data["celestrak_military"]).drop_nulls(subset=["tle_line1"]))
+        if "celestrak_resource" in data:
+            dfs.append(pl.from_arrow(data["celestrak_resource"]).drop_nulls(subset=["tle_line1"]))
+            
+        if dfs:
+            combined_df = pl.concat(dfs)            
+            keyword_filters = [pl.col("object_name").str.to_uppercase().str.contains(kw, literal=True) 
+                for kw in INTEL_SAT_KEYWORDS]
+            cached_tle_df = combined_df.filter(pl.any_horizontal(keyword_filters))
+            pn.state.notifications.success(f"📡 Cached {len(cached_tle_df)} active Intel Satellites from CelesTrak")
+            print(f"DEBUG [NETWORK]: Filtered down to {len(cached_tle_df)} intelligence satellites.")
+
+    if switch_satellites.value and cached_tle_df is not None and len(cached_tle_df) > 0:
+        
+        lats, lons, alts = compute_orbits(
+            cached_tle_df['tle_line1'].to_list(), 
+            cached_tle_df['tle_line2'].to_list()
+        )
+        
+        # Zip the new coordinates back into a display DataFrame
+        display_df = cached_tle_df.with_columns([
+            pl.Series("latitude", lats),
+            pl.Series("longitude", lons),
+            pl.Series("altitude_km", alts)
+        ]).filter(pl.col("latitude").is_not_nan()) # Drop decayed/failed orbits
+
+        if len(display_df) > 0:
+            cached_counts["celestrak"] = len(display_df)
+            lon_arr = ac.ChunkedArray.from_arrow(display_df["longitude"]).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(display_df["latitude"]).combine_chunks()
+            table = ac.Table.from_arrow(display_df).append_column("geometry", points([lon_arr, lat_arr]))
+            
+            cached_layers["celestrak"] = lonboard.ScatterplotLayer(
+                table=table, 
+                get_fill_color=[255, 255, 255, 255], 
+                get_radius=25000,
+                radius_min_pixels=4
+            )
+
     if "opensky" in data:
         df = pl.from_arrow(data["opensky"]).drop_nulls(subset=["longitude", "latitude"])
         if len(df) > 0:
@@ -702,23 +751,6 @@ def update_dashboard():
             lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
             table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
             cached_layers["ais_stream"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[0, 150, 255, 200], get_radius=4000, radius_min_pixels=2)
-
-    if "celestrak" in data:
-        df = pl.from_arrow(data["celestrak"]).drop_nulls(subset=["longitude", "latitude"])
-        if len(df) > 0:
-            cached_counts["celestrak"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            # Lonboard will automatically map the points
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            
-            # bright white and slightly larger than planes
-            cached_layers["celestrak"] = lonboard.ScatterplotLayer(
-                table=table, 
-                get_fill_color=[255, 255, 255, 255], 
-                get_radius=8000, 
-                radius_min_pixels=3
-            )
 
     if "usgs" in data:
         df = pl.from_arrow(data["usgs"]).drop_nulls(subset=["longitude", "latitude"])
@@ -757,7 +789,7 @@ def update_dashboard():
     if switch_satellites.value and "celestrak" in cached_layers:
         active_layers.append(cached_layers["celestrak"])
         total_tracked += cached_counts["celestrak"]
-        
+
     if switch_ships.value and "ais_stream" in cached_layers:
         active_layers.append(cached_layers["ais_stream"])
         total_tracked += cached_counts["ais_stream"]
@@ -804,7 +836,7 @@ def update_dashboard():
     if total_tracked > 0:
         system_stats.object = f"🟢 **Engine Status:** Online\n📡 **Tracking:** {total_tracked:,} events"
 
-pn.state.add_periodic_callback(update_dashboard, period=5000)
+pn.state.add_periodic_callback(update_dashboard, period=1000)
 
 
 template = pn.template.FastListTemplate(
