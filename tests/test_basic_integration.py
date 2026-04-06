@@ -164,9 +164,9 @@ class TestOsintEngineIntegration(unittest.TestCase):
         )
 
         cls.mock_server.add_rest_route(
-            path='/celestrak/tle',
+            path='/celestrak/military', 
             json_payload=json.dumps([{
-                "OBJECT_NAME": "ISS (ZARYA)", 
+                "OBJECT_NAME": "ISS (ZARYA)",
                 "OBJECT_ID": "1998-067A", 
                 "TLE_LINE1": "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992",
                 "TLE_LINE2": "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
@@ -274,14 +274,16 @@ class TestOsintEngineIntegration(unittest.TestCase):
         engine.add_rest_source(url=f'{base_url}/coingecko/price', adapter=SourceAdapter.COINGECKO, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/meteo/current', adapter=SourceAdapter.OPEN_METEO, poll_interval_sec=1)
         engine.add_rest_source(url=f'{base_url}/unhcr/population', adapter=SourceAdapter.UNHCR, poll_interval_sec=1)
-        engine.add_rest_source(url=f'{base_url}/celestrak/tle', adapter=SourceAdapter.CELESTRAK, poll_interval_sec=1)
+        engine.add_rest_source(
+            url=f'{base_url}/celestrak/military', adapter=SourceAdapter.CELESTRAK_MILITARY, poll_interval_sec=1
+        )
 
         engine.start_all()
 
         expected_keys =  ['acled', 'ais_stream', 'opensky', 'gdelt_geojson', 'google_news_reuters', 
         'bbc', 'usgs', 'binance', 'nasa_eonet', 'polymarket', 'cloudflare_radar', 'nasa_firms', 
         'urlhaus', 'fred', 'ucdp', 'oref', 'coingecko', 'open_meteo', 'feodo_tracker', 'ransomware_live', 
-        'nga_warnings', 'unhcr', 'celestrak']
+        'nga_warnings', 'unhcr', 'celestrak_military']
 
         data = {}
         for _ in range(20):  
@@ -459,7 +461,7 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert unhcr_df['date'][0] == '2023'
 
        # Check CelesTrak data ingestion
-        celestrak_df = pl.from_arrow(data['celestrak'])
+        celestrak_df = pl.from_arrow(data['celestrak_military'])
         assert len(celestrak_df) >= 1
         assert celestrak_df['object_name'][0] == 'ISS (ZARYA)'
         assert celestrak_df['object_id'][0] == '1998-067A'
