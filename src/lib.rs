@@ -22,7 +22,7 @@ mod geo;
 mod mlt;
 
 use engine::Engine;
-use parser::ParserType;
+// use parser::ParserType;
 
 #[pyclass(frozen, eq, from_py_object)]
 #[derive(Clone, PartialEq, Debug)]
@@ -36,64 +36,39 @@ pub struct SourceAdapter {
     pub alternate_urls: Vec<String>,
 }
 
-impl SourceAdapter {
-    pub fn new(pt: ParserType, name: &str, url: &str, alternates: &[&str]) -> Self {
-        Self {
-            name: name.to_string(),
-            default_url: url.to_string(),
-            alternate_urls: alternates.iter().map(|&s| s.to_string()).collect(),
-            parser_type: pt,
-        }
-    }
+
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParserType {
+
+    Binance,
+    AisStream,
+    Telegram,
+    Acled,
+    OpenSky,
+    GdeltGeojson,
+    NasaEonet,
+    Usgs,
+    Urlhaus,
+    Fred,
+    Oref,
+    CoinGecko,
+    OpenMeteo,
+    GoogleNewsReuters,
+    Nws,
+    Bbc,
+    AlJazeera,
+    Polymarket,
+    CloudflareRadar,
+    NasaFirms,
+    Ucdp,
+    FeodoTracker,
+    RansomwareLive,
+    NgaWarnings,
+    Unhcr,     
+    Celestrak,
 }
 
-#[pyfunction]
-pub fn sources() -> Vec<SourceAdapter> {
-    let src = |pt: ParserType, name: &str, url: &str| SourceAdapter::new(pt, name, url, &[]);
-    let src_with_alt = |pt: ParserType, name: &str, url: &str, alts: &[&str]| SourceAdapter::new(pt, name, url, alts);
-    vec![
-        src_with_alt(
-            ParserType::Binance,   
-            "BINANCE",       
-            "wss://stream.binance.com:9443/ws/btcusdt@trade", 
-            &["wss://stream.binance.us:9443/ws/btcusdt@trade"]
-        ),
-        src(ParserType::AisStream,     "AIS_STREAM",    "wss://stream.aisstream.io/v0/stream"),
-        src_with_alt(
-            ParserType::Acled,     
-            "ACLED",         
-            "https://acleddata.com/api/acled/read", 
-            &["https://api.acleddata.com/acled/read"]
-        ),
-        src(ParserType::NasaEonet,     "NASA_EONET",    "https://eonet.gsfc.nasa.gov/api/v3/events"),
-        src(ParserType::OpenSky,       "OPENSKY",       "https://opensky-network.org/api/states/all"),
-        src(ParserType::GdeltGeojson,  "GDELT_GEOJSON", "https://api.gdeltproject.org/api/v2/geo/geo?format=geojson"),
-        src(
-            ParserType::GoogleNewsReuters, 
-            "GOOGLE_NEWS_REUTERS", 
-            "https://news.google.com/rss/search?q=site%3Areuters.com+when%3A1d&hl=en-US&gl=US&ceid=US%3Aen"
-        ),
-        src(ParserType::Polymarket,    "POLYMARKET",    "https://gamma-api.polymarket.com/events?limit=50&active=true"),
-        src(ParserType::Usgs,          "USGS",          "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson"),
-        src(ParserType::Nws,           "NWS",           "https://api.weather.gov/alerts/active"),
-        src(ParserType::Bbc,           "BBC",           "http://feeds.bbci.co.uk/news/world/rss.xml"),
-        src(ParserType::AlJazeera,     "AL_JAZEERA",    "https://www.aljazeera.com/xml/rss/all.xml"),
-        src(ParserType::CloudflareRadar, "CLOUDFLARE_RADAR", "https://api.cloudflare.com/client/v4/radar/bgp/leaks/events"),
-        src(ParserType::NasaFirms,       "NASA_FIRMS",       "https://firms.modaps.eosdis.nasa.gov/api/country/csv/YOUR_KEY/VIIRS_SNPP_NRT/USA/1"),
-        src(ParserType::Urlhaus,         "URLHAUS",          "https://urlhaus-api.abuse.ch/v1/urls/recent/"),
-        src(ParserType::Fred,      "FRED",       "https://api.stlouisfed.org/fred/series/observations?series_id=BDI&file_type=json"),
-        src(ParserType::Ucdp,      "UCDP",       "https://ucdpapi.pcr.uu.se/api/gedevents/23.1?pagesize=100"),
-        src(ParserType::Oref,      "OREF",       "https://www.oref.org.il/WarningMessages/alert/alerts.json"),
-        src(ParserType::CoinGecko, "COINGECKO",  "https://api.coingecko.com/api/v3/simple/price?ids=tether,bitcoin&vs_currencies=usd"),
-        src(ParserType::OpenMeteo, "OPEN_METEO", "https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true"),
-        src(ParserType::FeodoTracker, "FEODO_TRACKER", "https://feodotracker.abuse.ch/downloads/ipblocklist.json"),
-        src(ParserType::RansomwareLive, "RANSOMWARE_LIVE", "https://api.ransomware.live/v2/recentvictims"),
-        src(ParserType::NgaWarnings, "NGA_WARNINGS", "https://msi.nga.mil/api/publications/broadcast-warn?output=json"),
-        src(ParserType::Unhcr, "UNHCR", "https://api.unhcr.org/population/v1/population/"),
-        src(ParserType::Celestrak, "CELESTRAK", "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json"),
-
-    ]
-}
 
 #[pyclass(subclass)]
 pub struct OsintEngine {
@@ -141,50 +116,53 @@ impl OsintEngine {
         py_dict
     }
 
-    #[pyo3(signature = (adapter, name=None, url=None, poll_interval_sec=60, headers=None))]
+    #[pyo3(signature = (parser_type, name, url, poll_interval_sec=60, headers=None))]
     fn add_rest_source(
-        &self, adapter: SourceAdapter, name: Option<&str>, url: Option<&str>,
-        poll_interval_sec: u64, headers: Option<HashMap<String, String>>,
+        &self, 
+        parser_type: ParserType, 
+        name: String, 
+        url: String,
+        poll_interval_sec: u64, 
+        headers: Option<HashMap<String, String>>,
     ) -> PyResult<()> {
-        let url = url.map(|s| s.to_string()).unwrap_or_else(|| adapter.default_url.to_string());        
-        let parser = parser::get_parser(adapter.parser_type); 
-        let source_name = name.map(|s| s.to_string()).unwrap_or_else(|| adapter.name.to_lowercase());
-
+        
+        let parser = parser::get_parser(parser_type); 
         let runner = Box::new(runner::RestRunner { 
             interval_sec: poll_interval_sec, 
             headers,
             client: self.http_client.clone() 
         });
 
-        self.engine.add_source(source_name.clone(), url, runner, parser);
-        
+        self.engine.add_source(name.clone(), url, runner, parser);
         if self.is_running {
-            let _ = self.engine.start_source(&source_name);
+            let _ = self.engine.start_source(&name);
         }
+        
         Ok(())
     }
 
-    #[pyo3(signature = (adapter, name=None, url=None, init_message=None))]
+    #[pyo3(signature = (parser_type, name, url, init_message=None))]
     fn add_ws_source(
-        &self, adapter: SourceAdapter, name: Option<&str>, url: Option<&str>, init_message: Option<String>,
+        &self, 
+        parser_type: ParserType, 
+        name: String, 
+        url: String, 
+        init_message: Option<String>,
     ) -> PyResult<()> {
-        let url = url.map(|s| s.to_string()).unwrap_or_else(|| adapter.default_url.to_string());
-        let parser = parser::get_parser(adapter.parser_type); 
-        let source_name = name.map(|s| s.to_string()).unwrap_or_else(|| adapter.name.to_lowercase());
-
-        let runner = Box::new(runner::WsRunner { init_message });
-
-        self.engine.add_source(source_name.clone(), url, runner, parser);
         
+        let parser = parser::get_parser(parser_type); 
+        let runner = Box::new(runner::WsRunner { init_message });
+        self.engine.add_source(name.clone(), url, runner, parser);
         if self.is_running {
-            let _ = self.engine.start_source(&source_name);
+            let _ = self.engine.start_source(&name);
         }
+        
         Ok(())
     }
 
     #[pyo3(signature = (name, target_channel, tg_api_id, tg_api_hash, tg_session_path))]
     pub fn add_telegram_source(&mut self, name: &str, target_channel: &str, tg_api_id: i32, tg_api_hash: &str, tg_session_path: &str) {
-        let parser = crate::parser::get_parser(crate::parser::ParserType::Telegram);
+        let parser = crate::parser::get_parser(ParserType::Telegram);
         self.engine.add_telegram_source(
             target_channel.to_string(),
             tg_api_id,
@@ -333,9 +311,9 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OsintEngine>()?;
     m.add_class::<mock_server::MockServer>()?; 
     m.add_class::<SourceAdapter>()?;
+    m.add_class::<ParserType>()?;
     
     m.add_function(wrap_pyfunction!(login_telegram, m)?)?;
-    m.add_function(wrap_pyfunction!(sources, m)?)?;
 
     m.add_function(wrap_pyfunction!(scrape::scrape_article, m)?)?;
     m.add_function(wrap_pyfunction!(geo::fetch_submarine_cables, m)?)?;

@@ -46,6 +46,7 @@ stealth_headers = {
 }
 
 engine.add_rest_source(SourceAdapter.OPENSKY, poll_interval_sec=5)
+engine.add_rest_source(SourceAdapter.CELESTRAK, poll_interval_sec=5)
 engine.add_rest_source(SourceAdapter.USGS, poll_interval_sec=15)
 engine.add_rest_source(SourceAdapter.NASA_EONET, poll_interval_sec=30)
 engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
@@ -88,6 +89,7 @@ engine.start_all()
 base_layers = []
 
 switch_flights = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
+switch_satellites = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0)) 
 switch_ships = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 switch_quakes = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 switch_fires = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
@@ -96,6 +98,7 @@ switch_acled = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 layer_controls = pn.Column(
     "### 🗺️ Active Layers",
     pn.Row(switch_flights, pn.pane.HTML("<b style='color: rgb(57, 255, 20); font-size: 1.1em;'>✈️ Flights</b>"), align='center'),
+    pn.Row(switch_satellites, pn.pane.HTML("<b style='color: rgb(255, 255, 255); font-size: 1.1em;'>🛰️ Satellites</b>"), align='center'),
     pn.Row(switch_ships, pn.pane.HTML("<b style='color: rgb(0, 150, 255); font-size: 1.1em;'>🚢 Maritime</b>"), align='center'),
     pn.Row(switch_quakes, pn.pane.HTML("<b style='color: rgb(255, 165, 0); font-size: 1.1em;'>🌋 Quakes</b>"), align='center'),
     pn.Row(switch_fires, pn.pane.HTML("<b style='color: rgb(255, 255, 0); font-size: 1.1em;'>🔥 Wildfires</b>"), align='center'),
@@ -700,6 +703,23 @@ def update_dashboard():
             table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
             cached_layers["ais_stream"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[0, 150, 255, 200], get_radius=4000, radius_min_pixels=2)
 
+    if "celestrak" in data:
+        df = pl.from_arrow(data["celestrak"]).drop_nulls(subset=["longitude", "latitude"])
+        if len(df) > 0:
+            cached_counts["celestrak"] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
+            # Lonboard will automatically map the points
+            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
+            
+            # bright white and slightly larger than planes
+            cached_layers["celestrak"] = lonboard.ScatterplotLayer(
+                table=table, 
+                get_fill_color=[255, 255, 255, 255], 
+                get_radius=8000, 
+                radius_min_pixels=3
+            )
+
     if "usgs" in data:
         df = pl.from_arrow(data["usgs"]).drop_nulls(subset=["longitude", "latitude"])
         if len(df) > 0:
@@ -733,6 +753,10 @@ def update_dashboard():
     if switch_flights.value and "opensky" in cached_layers:
         active_layers.append(cached_layers["opensky"])
         total_tracked += cached_counts["opensky"]
+    
+    if switch_satellites.value and "celestrak" in cached_layers:
+        active_layers.append(cached_layers["celestrak"])
+        total_tracked += cached_counts["celestrak"]
         
     if switch_ships.value and "ais_stream" in cached_layers:
         active_layers.append(cached_layers["ais_stream"])

@@ -6,39 +6,8 @@ use quick_xml::Reader;
 
 use serde_json::Value;
 
+use crate::ParserType;
 use crate::satellites;
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParserType {
-
-    Binance,
-    AisStream,
-    Telegram,
-    Acled,
-    OpenSky,
-    GdeltGeojson,
-    NasaEonet,
-    Usgs,
-    Urlhaus,
-    Fred,
-    Oref,
-    CoinGecko,
-    OpenMeteo,
-    GoogleNewsReuters,
-    Nws,
-    Bbc,
-    AlJazeera,
-    Polymarket,
-    CloudflareRadar,
-    NasaFirms,
-    Ucdp,
-    FeodoTracker,
-    RansomwareLive,
-    NgaWarnings,
-    Unhcr,     
-    Celestrak,
-}
 
 
 //-- PARSER & ROUTING

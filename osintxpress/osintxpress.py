@@ -50,6 +50,10 @@ def _load_rust_pip_or_dev(_rust_lib_name: str = '_osintxpress', module_dev_path:
 _rust_lib = _load_rust_pip_or_dev()
 globals().update({k: v for k, v in vars(_rust_lib).items() if not k.startswith('__')})
 
+try:
+    from .sources import SourceAdapter, SourceConfig
+except:
+    from sources import SourceAdapter, SourceConfig
 
 ## -- General helper functions
 
@@ -76,13 +80,6 @@ def _is_rtl(text):
 
 
 ## -- Python wrapping logic
-
-class SourceAdapter:
-    pass
-
-for source in _rust_lib.sources():
-    setattr(SourceAdapter, source.name, source)
-
 
 def supported_sources() -> list[str]:
     return [k for k in dir(SourceAdapter) if not k.startswith('_')]
@@ -117,6 +114,7 @@ def cleanup_engines():
 
 atexit.register(cleanup_engines)
 
+
 class OsintEngine(_rust_lib.OsintEngine):
 
     def __init__(self, worker_threads=4):
@@ -127,20 +125,26 @@ class OsintEngine(_rust_lib.OsintEngine):
         _active_engines.add(self)
 
 
-    def add_rest_source(self, adapter, name=None, url=None, poll_interval_sec=60, headers=None):
-
+    def add_rest_source(self, adapter: SourceConfig, name=None, url=None, poll_interval_sec=60, headers=None):
+        
         src_name = name or adapter.name.lower()
+        final_url = url if url else adapter.default_url
+
         self.source_registry[src_name] = {
             'adapter': adapter, 'type': 'rest', 'interval': poll_interval_sec, 'headers': headers
         }
-        # Call down to the Rust FFI
-        super().add_rest_source(adapter, name, url, poll_interval_sec, headers)
+        
+        super().add_rest_source(adapter.parser_type, src_name, final_url, poll_interval_sec, headers)
 
 
-    def add_ws_source(self, adapter, name=None, url=None, init_message=None):
+    def add_ws_source(self, adapter: SourceConfig, name=None, url=None, init_message=None):
 
         src_name = name or adapter.name.lower()
+        final_url = url if url else adapter.default_url
+
         self.source_registry[src_name] = {
             'adapter': adapter, 'type': 'ws', 'interval': None, 'init_message': init_message
         }
-        super().add_ws_source(adapter, name, url, init_message)
+        
+        super().add_ws_source(adapter.parser_type, src_name, final_url, init_message)
+
