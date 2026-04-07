@@ -13,14 +13,14 @@ from lonboard.basemap import MaplibreBasemap, CartoStyle
 from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, compute_orbits,
     fetch_submarine_cables, _is_rtl)
 
-warnings.filterwarnings("ignore", message="No CRS exists on data")
-pn.extension('ipywidgets', 'tabulator', 'terminal', notifications=True, sizing_mode="stretch_width")
+warnings.filterwarnings('ignore', message='No CRS exists on data')
+pn.extension('ipywidgets', 'tabulator', 'terminal', notifications=True, sizing_mode='stretch_width')
 
 
 class DualLogger:
     def __init__(self, filename):
         self.terminal = sys.stdout
-        self.log_file = open(filename, "a", encoding="utf-8")
+        self.log_file = open(filename, 'a', encoding='utf-8')
 
     def write(self, message):
         self.terminal.write(message)
@@ -32,7 +32,7 @@ class DualLogger:
         self.log_file.flush()
 
 # Intercept all print() commands and Python errors
-sys.stdout = DualLogger("osint.log")
+sys.stdout = DualLogger('osint.log')
 sys.stderr = sys.stdout
 
 
@@ -42,7 +42,7 @@ sys.stderr = sys.stdout
 engine = OsintEngine(worker_threads=4)
 
 stealth_headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
 engine.add_rest_source(SourceAdapter.OPENSKY, poll_interval_sec=5)
@@ -54,28 +54,28 @@ engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
 engine.add_rest_source(SourceAdapter.GOOGLE_NEWS_REUTERS, poll_interval_sec=60, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.POLYMARKET, poll_interval_sec=30, headers=stealth_headers)
 
-AIS_API_KEY = os.getenv("AIS_API_KEY", "YOUR_AIS_API_KEY") 
+AIS_API_KEY = os.getenv('AIS_API_KEY', 'YOUR_AIS_API_KEY') 
 ais_payload = json.dumps({
-    "APIKey": AIS_API_KEY,
-    "BoundingBoxes": [[[-90, -180], [90, 180]]], 
-    "FilterMessageTypes": ["PositionReport"]
+    'APIKey': AIS_API_KEY,
+    'BoundingBoxes': [[[-90, -180], [90, 180]]], 
+    'FilterMessageTypes': ['PositionReport']
 })
 engine.add_ws_source(SourceAdapter.AIS_STREAM, init_message=ais_payload)
 
-TG_API_ID = int(os.getenv("TG_API_ID", 123456))
-TG_API_HASH = os.getenv("TG_API_HASH", "API_HASH") 
-SESSION = "osint.session"
-CHANNELS_FILE = "telegram_sources.json"
+TG_API_ID = int(os.getenv('TG_API_ID', 123456))
+TG_API_HASH = os.getenv('TG_API_HASH', 'API_HASH') 
+SESSION = 'osint.session'
+CHANNELS_FILE = 'telegram_sources.json'
 
 if os.path.exists(CHANNELS_FILE):
-    with open(CHANNELS_FILE, "r") as f:
+    with open(CHANNELS_FILE, 'r') as f:
         active_channels = json.load(f)
 else:
-    active_channels = ["abualiexpress", "shiranraz"]
+    active_channels = ['abualiexpress', 'shiranraz']
 
 for channel in active_channels:
     engine.add_telegram_source(
-        name=f"tg_{channel}", 
+        name=f'tg_{channel}', 
         target_channel=channel, 
         tg_api_id=TG_API_ID,
         tg_api_hash=TG_API_HASH,
@@ -97,7 +97,7 @@ switch_fires = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 switch_acled = pn.widgets.Switch(value=True, margin=(5, 10, 5, 0))
 
 layer_controls = pn.Column(
-    "### 🗺️ Active Layers",
+    '### 🗺️ Active Layers',
     pn.Row(switch_flights, pn.pane.HTML("<b style='color: rgb(57, 255, 20); font-size: 1.1em;'>✈️ Flights</b>"), align='center'),
     pn.Row(switch_satellites, pn.pane.HTML("<b style='color: rgb(255, 255, 255); font-size: 1.1em;'>🛰️ Satellites</b>"), align='center'),
     pn.Row(switch_ships, pn.pane.HTML("<b style='color: rgb(0, 150, 255); font-size: 1.1em;'>🚢 Maritime</b>"), align='center'),
@@ -106,20 +106,20 @@ layer_controls = pn.Column(
     pn.Row(switch_acled, pn.pane.HTML("<b style='color: rgb(255, 50, 50); font-size: 1.1em;'>⚔️ Conflicts</b>"), align='center'),
 )
 
-system_stats = pn.pane.Markdown("🟢 **Engine Status:** Online\n📡 **Tracking:** 0 events")
+system_stats = pn.pane.Markdown('🟢 **Engine Status:** Online\n📡 **Tracking:** 0 events')
 
 interactive_map = lonboard.Map(
     layers=base_layers, # Initialize with the submarine cables
     basemap=MaplibreBasemap(style=CartoStyle.DarkMatter), 
-    view_state={"longitude": 34.8, "latitude": 31.5, "zoom": 3, "pitch": 25, "minZoom": 2.5, "maxZoom": 20}
+    view_state={'longitude': 34.8, 'latitude': 31.5, 'zoom': 3, 'pitch': 25, 'minZoom': 2.5, 'maxZoom': 20}
 )
 
-map_pane = pn.pane.IPyWidget(interactive_map, sizing_mode="stretch_both")
+map_pane = pn.pane.IPyWidget(interactive_map, sizing_mode='stretch_both')
 
 map_tab = pn.Row(
     pn.Column(system_stats, pn.layout.Divider(), layer_controls, width=180),
     map_pane,
-    sizing_mode="stretch_both",
+    sizing_mode='stretch_both',
     styles={'height': '85vh'} 
 )
 
@@ -132,10 +132,10 @@ def create_row_callbacks(src_name, toggle_widget):
     def on_toggle(event):
         if event.new:
             engine.start_source(src_name)
-            pn.state.notifications.success(f"▶️ {src_name.upper()} started")
+            pn.state.notifications.success(f'▶️ {src_name.upper()} started')
         else:
             engine.stop_source(src_name)
-            pn.state.notifications.warning(f"⏸️ {src_name.upper()} stopped")
+            pn.state.notifications.warning(f'⏸️ {src_name.upper()} stopped')
 
 
     def on_interval_change(event):
@@ -151,7 +151,7 @@ def create_row_callbacks(src_name, toggle_widget):
         if not toggle_widget.value:
             engine.stop_source(src_name)
             
-        pn.state.notifications.info(f"⏱️ {src_name.upper()} interval updated to {new_val}s")
+        pn.state.notifications.info(f'⏱️ {src_name.upper()} interval updated to {new_val}s')
 
     return on_interval_change, on_toggle
 
@@ -159,15 +159,15 @@ def create_row_callbacks(src_name, toggle_widget):
 def build_source_manager():
 
     rows = [
-        pn.pane.Markdown("### 📡 Active Connection Manager\n*Live control over the Rust background polling workers.*"),
-        pn.Row(pn.pane.Markdown("**Source Name**", width=180), pn.pane.Markdown("**Poll**", width=80), pn.pane.Markdown("**Status**", width=60)),
+        pn.pane.Markdown('### 📡 Active Connection Manager\n*Live control over the Rust background polling workers.*'),
+        pn.Row(pn.pane.Markdown('**Source Name**', width=180), pn.pane.Markdown('**Poll**', width=80), pn.pane.Markdown('**Status**', width=60)),
         pn.layout.Divider()
     ]
     
     # Read from the Engine's internal Python state
     for name, cfg in engine.source_registry.items():
-        badge_color = "#0096ff" if cfg['type'] == 'ws' else "#39ff14"
-        badge_text = "WS" if cfg['type'] == 'ws' else "REST"
+        badge_color = '#0096ff' if cfg['type'] == 'ws' else '#39ff14'
+        badge_text = 'WS' if cfg['type'] == 'ws' else 'REST'
         
         label = pn.pane.HTML(f"<b style='font-size:1.1em;'>{name.upper()}</b> <span style='background:{badge_color}; color:black; padding:2px 6px; border-radius:4px; font-size:0.7em;'>{badge_text}</span>", width=180)
         
@@ -179,9 +179,9 @@ def build_source_manager():
             spinner = pn.widgets.IntInput(value=cfg['interval'], start=1, end=3600, width=80)
             spinner.param.watch(interval_change_cb, 'value')
         else:
-            spinner = pn.pane.Markdown("*(Push)*", width=80, margin=(10,0))
+            spinner = pn.pane.Markdown('*(Push)*', width=80, margin=(10,0))
         
-        rows.append(pn.Row(label, spinner, toggle, align="center"))
+        rows.append(pn.Row(label, spinner, toggle, align='center'))
         
     return pn.Column(*rows, sizing_mode='stretch_width')
 
@@ -191,13 +191,13 @@ source_manager_panel = build_source_manager()
 ## -- Telegram UI / History / Login
 ##  
 
-def create_tg_card(channel, text, timestamp, media_path=""):
+def create_tg_card(channel, text, timestamp, media_path=''):
 
     dt = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
-    color = "var(--accent-fill-active)" if "abu" in channel.lower() else "var(--neutral-fill-active)"
+    color = 'var(--accent-fill-active)' if 'abu' in channel.lower() else 'var(--neutral-fill-active)'
     
-    direction = "rtl" if _is_rtl(text) else "ltr"
-    align = "right" if direction == "rtl" else "left"
+    direction = 'rtl' if _is_rtl(text) else 'ltr'
+    align = 'right' if direction == 'rtl' else 'left'
     
     text = text.replace('\\n', '\n')
     parts = text.split('\n', 1)
@@ -207,26 +207,26 @@ def create_tg_card(channel, text, timestamp, media_path=""):
         formatted_text = text.replace('\n', '<br>')
 
     # 📸 Wrap the local file in an HTML <details> collapsible!
-    img_html = ""
+    img_html = ''
     if media_path and os.path.exists(media_path):
         try:
-            with open(media_path, "rb") as img_file:
+            with open(media_path, 'rb') as img_file:
                 b64_str = base64.b64encode(img_file.read()).decode('utf-8')
                 
                 # Native HTML collapsible: no Python callbacks required!
-                img_html = f"""
+                img_html = f'''
                 <details style="margin-top: 12px;">
                     <summary style="cursor: pointer; color: {color}; font-weight: bold; outline: none; user-select: none; font-size: 0.9em;">
                         📎 Show Attached Media
                     </summary>
                     <img src='data:image/jpeg;base64,{b64_str}' style='max-width: 100%; border-radius: 4px; margin-top: 8px;'>
                 </details>
-                """
+                '''
         except Exception as e:
-            print(f"Error loading image {media_path}: {e}")
+            print(f'Error loading image {media_path}: {e}')
 
     return pn.pane.HTML(
-        f"""
+        f'''
         <div style="border-left: 4px solid {color}; padding-left: 10px; padding-bottom: 5px; margin-bottom: 10px; background: var(--neutral-fill-rest);">
             <small style="color: gray;"><b>@{channel}</b> • {dt}</small><br>
             <div style="direction: {direction}; text-align: {align}; font-family: sans-serif;">
@@ -234,12 +234,12 @@ def create_tg_card(channel, text, timestamp, media_path=""):
                 {img_html}
             </div>
         </div>
-        """,
-        sizing_mode="stretch_width"
+        ''',
+        sizing_mode='stretch_width'
     )
 
 
-feed_container = pn.Column(sizing_mode="stretch_width")
+feed_container = pn.Column(sizing_mode='stretch_width')
 
 # Multi-Select List
 sources_list = pn.widgets.MultiSelect(
@@ -250,8 +250,8 @@ sources_list = pn.widgets.MultiSelect(
 )
 
 # -  New Channel Controls
-new_channel_input = pn.widgets.TextInput(placeholder="e.g. ReutersWorldChannel", sizing_mode='stretch_width')
-add_channel_btn = pn.widgets.Button(name="➕ Add Channel", button_type="success", sizing_mode='stretch_width')
+new_channel_input = pn.widgets.TextInput(placeholder='e.g. ReutersWorldChannel', sizing_mode='stretch_width')
+add_channel_btn = pn.widgets.Button(name='➕ Add Channel', button_type='success', sizing_mode='stretch_width')
 
 def on_add_channel(event):
 
@@ -259,7 +259,7 @@ def on_add_channel(event):
     if new_channel:
         # Add to Rust engine
         engine.add_telegram_source(
-            name=f"tg_{new_channel}", 
+            name=f'tg_{new_channel}', 
             target_channel=new_channel, 
             tg_api_id=TG_API_ID, 
             tg_api_hash=TG_API_HASH,
@@ -269,47 +269,47 @@ def on_add_channel(event):
         # Update active_channels and persist to disk
         if new_channel not in active_channels:
             active_channels.append(new_channel)
-            with open(CHANNELS_FILE, "w") as f:
+            with open(CHANNELS_FILE, 'w') as f:
                 json.dump(active_channels, f)
             
             # Update the UI list options
             sources_list.options = active_channels.copy()
             
-        new_channel_input.value = ""
-        pn.state.notifications.success(f"Multiplexed Telegram channel: @{new_channel}")
+        new_channel_input.value = ''
+        pn.state.notifications.success(f'Multiplexed Telegram channel: @{new_channel}')
 
 add_channel_btn.on_click(on_add_channel)
 
 # - History Controls
-fetch_limit_input = pn.widgets.IntInput(name="Messages", value=5, start=1, end=1000, width=80)
-fetch_history_btn = pn.widgets.Button(name="⏪ Fetch History", button_type="primary", sizing_mode='stretch_width')
+fetch_limit_input = pn.widgets.IntInput(name='Messages', value=5, start=1, end=1000, width=80)
+fetch_history_btn = pn.widgets.Button(name='⏪ Fetch History', button_type='primary', sizing_mode='stretch_width')
 
 def on_fetch_history(event):
     selected_sources = sources_list.value
     limit = fetch_limit_input.value
     
     if not selected_sources:
-        pn.state.notifications.warning("No sources selected!")
+        pn.state.notifications.warning('No sources selected!')
         return
         
     for target_channel in selected_sources:
         engine.fetch_telegram_history(target_channel, limit) 
-        pn.state.notifications.info(f"Fetching {limit} historical messages from @{target_channel}...")
+        pn.state.notifications.info(f'Fetching {limit} historical messages from @{target_channel}...')
 
 fetch_history_btn.on_click(on_fetch_history)
 
 # - Telegram login
 
 auth_event = threading.Event()
-tg_login_btn = pn.widgets.Button(name="🔐 Authorize Telegram Session", button_type="success", width=250)
+tg_login_btn = pn.widgets.Button(name='🔐 Authorize Telegram Session', button_type='success', width=250)
 
-api_id_input = pn.widgets.TextInput(name="API ID")
-api_hash_input = pn.widgets.PasswordInput(name="API Hash")
-phone_input = pn.widgets.TextInput(name="Phone Number", placeholder="+1234567890")
+api_id_input = pn.widgets.TextInput(name='API ID')
+api_hash_input = pn.widgets.PasswordInput(name='API Hash')
+phone_input = pn.widgets.TextInput(name='Phone Number', placeholder='+1234567890')
 
-request_code_btn = pn.widgets.Button(name="1. Request Code", button_type="primary")
-code_input = pn.widgets.TextInput(name="2FA Code", disabled=True, placeholder="Waiting for Telegram...")
-submit_code_btn = pn.widgets.Button(name="2. Submit Code", button_type="success", disabled=True)
+request_code_btn = pn.widgets.Button(name='1. Request Code', button_type='primary')
+code_input = pn.widgets.TextInput(name='2FA Code', disabled=True, placeholder='Waiting for Telegram...')
+submit_code_btn = pn.widgets.Button(name='2. Submit Code', button_type='success', disabled=True)
 
 def auto_submit_code(event):
     code = event.new.strip()
@@ -324,7 +324,7 @@ def get_code_callback():
         code_input.disabled = False
         submit_code_btn.disabled = False
         request_code_btn.disabled = True
-        pn.state.notifications.info("Please enter the 5-digit code sent to your Telegram app.")
+        pn.state.notifications.info('Please enter the 5-digit code sent to your Telegram app.')
     
     pn.state.execute(update_ui)
     auth_event.wait()
@@ -333,24 +333,24 @@ def get_code_callback():
 
 def start_auth_process(event):
     if not api_id_input.value or not api_hash_input.value or not phone_input.value:
-        pn.state.notifications.error("API ID, Hash, and Phone are required!")
+        pn.state.notifications.error('API ID, Hash, and Phone are required!')
         return
         
     auth_event.clear()
-    code_input.value = ""
+    code_input.value = ''
     request_code_btn.disabled = True
-    request_code_btn.name = "Requesting..."
+    request_code_btn.name = 'Requesting...'
     
     def worker():
         try:
             login_telegram(int(api_id_input.value), api_hash_input.value, phone_input.value, SESSION, get_code_callback)
             def on_success():
-                pn.state.notifications.success("Authorization complete!")
+                pn.state.notifications.success('Authorization complete!')
                 template.close_modal()
             pn.state.execute(on_success)
         except Exception as e:
             error_msg = str(e)
-            pn.state.execute(lambda msg=error_msg: pn.state.notifications.error(f"Login failed: {msg}"))
+            pn.state.execute(lambda msg=error_msg: pn.state.notifications.error(f'Login failed: {msg}'))
         finally:
             pn.state.execute(reset_login_ui)
             
@@ -358,7 +358,7 @@ def start_auth_process(event):
 
 
 def reset_login_ui():
-    request_code_btn.name = "1. Request Code"
+    request_code_btn.name = '1. Request Code'
     request_code_btn.disabled = False
     code_input.disabled = True
     submit_code_btn.disabled = True
@@ -368,12 +368,12 @@ def submit_code(event):
     if code_input.value.strip():
         auth_event.set()
     else:
-        pn.state.notifications.error("Please enter the code first.")
+        pn.state.notifications.error('Please enter the code first.')
 
 request_code_btn.on_click(start_auth_process)
 submit_code_btn.on_click(submit_code)
 
-login_instructions = pn.pane.Markdown("""
+login_instructions = pn.pane.Markdown('''
 ### 🔐 Telegram MTProto Authorization
 **How to get your API credentials:**
 1. Go to [my.telegram.org](https://my.telegram.org) and log in.
@@ -381,7 +381,7 @@ login_instructions = pn.pane.Markdown("""
 3. Fill out the form (App title: `OsintXpress`, Short name: `osintxpress`, Platform: `Desktop`).
 4. Click **Create application**.
 5. Paste your new **api_id** and **api_hash** below.
-""")
+''')
 
 login_modal = pn.Column(
     login_instructions,
@@ -411,7 +411,7 @@ telegram_sidebar_controls = pn.Column(
     pn.layout.Divider(),
     new_channel_input, 
     add_channel_btn,
-    pn.pane.Markdown("### 🔑 Authentication"),
+    pn.pane.Markdown('### 🔑 Authentication'),
     tg_login_btn, 
     width=260
 )
@@ -437,8 +437,8 @@ telegram_sidebar = pn.Column(
 
 telegram_tab = pn.Row(
     telegram_sidebar,
-    pn.Column(feed_container, scroll=True, sizing_mode="stretch_both"),    
-    sizing_mode="stretch_both",
+    pn.Column(feed_container, scroll=True, sizing_mode='stretch_both'),    
+    sizing_mode='stretch_both',
     styles={'height': '85vh'} 
 )
 
@@ -447,34 +447,34 @@ telegram_tab = pn.Row(
 ##
 
 def expand_news(row):
-    title = row.get("title", "No Title")
-    link = row.get("link", "#")
-    pub = row.get("pubDate", row.get("date", "Unknown Date"))
+    title = row.get('title', 'No Title')
+    link = row.get('link', '#')
+    pub = row.get('pubDate', row.get('date', 'Unknown Date'))
     
     # 🚀 Dynamically scrape the article via Rust when expanded
     article_markdown = scrape_article(link)
 
-    # formatted_text = article_text.replace("\n", "<br>")
+    # formatted_text = article_text.replace('\n', '<br>')
                 
     return pn.Column(
-        pn.pane.HTML(f"""
+        pn.pane.HTML(f'''
             <div style='padding: 15px 15px 0 15px; margin-top: 5px; background-color: var(--neutral-fill-rest); border-left: 4px solid #0096ff; border-radius: 4px 4px 0 0; cursor: default;'>
                 <small style='color: gray;'>{pub}</small><br><br>
                 <span style='font-size: 1.1em;'><b>{title}</b></span><br>
                 <hr style='border: 1px solid #333; margin: 15px 0 0 0;'>
             </div>
-        """, sizing_mode="stretch_width"),
+        ''', sizing_mode='stretch_width'),
         pn.pane.Markdown(
             article_markdown, 
-            sizing_mode="stretch_width", 
+            sizing_mode='stretch_width', 
             styles={'background-color': 'var(--neutral-fill-rest)', 'padding': '0 15px', 'border-left': '4px solid #0096ff', 'font-family': 'serif', 'font-size': '1.05em'}
         ),
-        pn.pane.HTML(f"""
+        pn.pane.HTML(f'''
             <div style='padding: 0 15px 15px 15px; margin-bottom: 5px; background-color: var(--neutral-fill-rest); border-left: 4px solid #0096ff; border-radius: 0 0 4px 4px; cursor: default;'>
                 <br>
                 <a href='{link}' target='_blank' style='color: #0096ff; text-decoration: none;'><b>View Original Source 🔗</b></a>
             </div>
-        """, sizing_mode="stretch_width"),
+        ''', sizing_mode="stretch_width"),
         sizing_mode="stretch_width",
         margin=0
     )
@@ -684,7 +684,7 @@ cached_counts = {}
 cached_tle_df = None
 INTEL_SAT_KEYWORDS = [
     "YAOGAN", "COSMOS 2", "WORLDVIEW", "SENTINEL", "SKYSAT", "GEOEYE", "RADARSAT", "LUSAIL", "OFK", 
-    "EROS"
+    "EROS", "PRAETORIAN"
 ]
 
 def update_dashboard():
@@ -700,12 +700,11 @@ def update_dashboard():
             dfs.append(pl.from_arrow(data["celestrak_resource"]).drop_nulls(subset=["tle_line1"]))
             
         if dfs:
-            combined_df = pl.concat(dfs)            
+            combined_df = pl.concat(dfs)     
             keyword_filters = [pl.col("object_name").str.to_uppercase().str.contains(kw, literal=True) 
                 for kw in INTEL_SAT_KEYWORDS]
             cached_tle_df = combined_df.filter(pl.any_horizontal(keyword_filters))
             pn.state.notifications.success(f"📡 Cached {len(cached_tle_df)} active Intel Satellites from CelesTrak")
-            print(f"DEBUG [NETWORK]: Filtered down to {len(cached_tle_df)} intelligence satellites.")
 
     if switch_satellites.value and cached_tle_df is not None and len(cached_tle_df) > 0:
         

@@ -32,11 +32,11 @@ class SourceAdapter:
         )
     CELESTRAK_MILITARY = SourceConfig(
         ParserType.Celestrak, "CELESTRAK_MILITARY", 
-        "https://celestrak.org/NORAD/elements/gp.php?GROUP=military&FORMAT=json"
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=military&FORMAT=tle"
         )
     CELESTRAK_RESOURCE = SourceConfig(
         ParserType.Celestrak, "CELESTRAK_RESOURCE", 
-        "https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=json"
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=tle"
         )
     OPENSKY = SourceConfig(
         ParserType.OpenSky, "OPENSKY", "https://opensky-network.org/api/states/all"

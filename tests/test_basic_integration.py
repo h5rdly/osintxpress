@@ -163,14 +163,14 @@ class TestOsintEngineIntegration(unittest.TestCase):
             json_payload=json.dumps({"items": [{"origin": "Syria", "destination": "Turkey", "population": 3500000, "date": "2023"}]})
         )
 
+
         cls.mock_server.add_rest_route(
             path='/celestrak/military', 
-            json_payload=json.dumps([{
-                "OBJECT_NAME": "ISS (ZARYA)",
-                "OBJECT_ID": "1998-067A", 
-                "TLE_LINE1": "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992",
-                "TLE_LINE2": "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008"
-            }])
+            raw_payload=(
+                "ISS (ZARYA)\n"
+                "1 25544U 98067A   20194.88612269 -.00002218  00000-0 -31515-4 0  9992\n"
+                "2 25544  51.6461 221.2784 0001413  89.1723 280.4612 15.49507896236008\n"
+            )
         )
 
         cls.mock_server.start()
@@ -464,7 +464,7 @@ class TestOsintEngineIntegration(unittest.TestCase):
         celestrak_df = pl.from_arrow(data['celestrak_military'])
         assert len(celestrak_df) >= 1
         assert celestrak_df['object_name'][0] == 'ISS (ZARYA)'
-        assert celestrak_df['object_id'][0] == '1998-067A'
+        assert celestrak_df['object_id'][0] == '25544'
         assert 'tle_line1' in celestrak_df.columns
         assert 'tle_line2' in celestrak_df.columns
 

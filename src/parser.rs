@@ -566,22 +566,28 @@ define_manual_parser!(
         ("tle_line2", tle_line2, Utf8, StringBuilder)
     ],
     extract: |payload: &String, object_name, object_id, tle_line1, tle_line2| {
-        if let Ok(json) = serde_json::from_str::<Value>(payload) {
-            if let Some(items) = json.as_array() {
-                for item in items {
-                    let l1 = item.get("TLE_LINE1").and_then(|v| v.as_str());
-                    let l2 = item.get("TLE_LINE2").and_then(|v| v.as_str());
+        
+        let lines: Vec<&str> = payload.lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+            
+        for chunk in lines.chunks(3) {
+            if chunk.len() == 3 {
+                let name = chunk[0];
+                let l1 = chunk[1];
+                let l2 = chunk[2];
 
-                    if let (Some(line1), Some(line2)) = (l1, l2) {
-                        let name_str = item.get("OBJECT_NAME").and_then(|v| v.as_str()).unwrap_or("Unknown");
-                        let id_str = item.get("OBJECT_ID").and_then(|v| v.as_str()).unwrap_or("Unknown");
-                        
-                        object_name.append_value(name_str);
-                        object_id.append_value(id_str);
-                        tle_line1.append_value(line1);
-                        tle_line2.append_value(line2);
-                    }
-                    // If l1 or l2 is missing, we do nothing
+                // Validate that it's a TLE block (Line 1 starts with '1', Line 2 with '2')
+                if l1.starts_with('1') && l2.starts_with('2') {
+                    
+                    // Extract the 5-digit NORAD ID from the string (chars 2-7) for the object_id
+                    let id = if l1.len() >= 7 { l1[2..7].trim() } else { "Unknown" };
+                    
+                    object_name.append_value(name);
+                    object_id.append_value(id);
+                    tle_line1.append_value(l1);
+                    tle_line2.append_value(l2);
                 }
             }
         }
