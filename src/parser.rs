@@ -23,6 +23,9 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
     match parser_type {
         ParserType::Binance         => Box::new(BinanceParser),
         ParserType::AisStream       => Box::new(AisStreamParser),
+        ParserType::AisHub          => Box::new(AishubParser),
+        ParserType::Marinesia       => Box::new(MarinesiaParser),
+        ParserType::DigiTraffic     => Box::new(DigitrafficParser),
         ParserType::Acled           => Box::new(AcledParser),
         ParserType::OpenSky         => Box::new(OpenSkyParser),
         ParserType::GdeltGeojson    => Box::new(GdeltParser), 
@@ -68,6 +71,8 @@ macro_rules! define_manual_parser {
                 let extractor: fn(&String, $( &mut $builder_type ),*) = $extract_logic;
                 
                 for payload in payloads {
+                    let preview = if payload.len() > 500 { &payload[..500] } else { payload };
+                    println!("🪲 [DEBUG {}]: {}", stringify!($struct_name), preview);
                     extractor(payload, $( &mut $var_name ),*);
                 }
 
@@ -572,14 +577,197 @@ define_manual_parser!(
 );
 
 
+define_manual_parser!(
+    MarinesiaParser,
+    fields: [
+        ("mmsi", mmsi, Int64, Int64Builder),
+        ("latitude", latitude, Float64, Float64Builder),
+        ("longitude", longitude, Float64, Float64Builder),
+        ("sog", sog, Float64, Float64Builder),
+        ("cog", cog, Float64, Float64Builder),
+        ("nav_status", nav_status, Int64, Int64Builder),
+        ("name", name, Utf8, StringBuilder),
+        ("ship_type", ship_type, Int64, Int64Builder),
+        ("destination", destination, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, mmsi, latitude, longitude, sog, cog, nav_status, name, ship_type, destination| {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+            let now = chrono::Utc::now().timestamp();
+            
+            if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
+                for ship in data {
+                    let mmsi_id = ship.get("mmsi").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let lat_val = ship.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let lon_val = ship.get("lng").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let nav_val = ship.get("status").and_then(|v| v.as_i64()).unwrap_or(15);
+                    
+                    // Translate Marinesia Strings into Standard AIS Integers!
+                    let type_str = ship.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    let mapped_type = match type_str {
+                        "Cargo" => 70,
+                        "Tanker" => 80,
+                        "Passenger" => 60,
+                        "Fishing" => 30,
+                        "Pleasure Craft" => 37,
+                        _ => 0,
+                    };
+
+                    let ship_name = ship.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let dest = ship.get("dest").and_then(|v| v.as_str()).unwrap_or("Unknown");
+
+                    // Update Dark Ship Cache
+                    if let Ok(mut cache) = crate::parser::AIS_CACHE.write() {
+                        let entry = cache.entry(mmsi_id).or_insert_with(crate::parser::ShipMeta::default);
+                        entry.last_seen = now;
+                        entry.last_lat = lat_val;
+                        entry.last_lon = lon_val;
+                        entry.last_nav_status = nav_val;
+                        entry.ship_type = mapped_type;
+                        entry.name = ship_name.to_string();
+                        entry.destination = dest.to_string();
+                    }
+
+                    mmsi.append_option(Some(mmsi_id));
+                    latitude.append_option(Some(lat_val));
+                    longitude.append_option(Some(lon_val));
+                    sog.append_option(ship.get("sog").and_then(|v| v.as_f64()));
+                    cog.append_option(ship.get("cog").and_then(|v| v.as_f64()));
+                    nav_status.append_option(Some(nav_val));
+                    name.append_option(Some(ship_name));
+                    ship_type.append_option(Some(mapped_type));
+                    destination.append_option(Some(dest));
+                }
+            }
+        }
+    }
+);
+
+
+define_manual_parser!(
+    DigitrafficParser,
+    fields: [
+        ("mmsi", mmsi, Int64, Int64Builder),
+        ("latitude", latitude, Float64, Float64Builder),
+        ("longitude", longitude, Float64, Float64Builder),
+        ("sog", sog, Float64, Float64Builder),
+        ("cog", cog, Float64, Float64Builder),
+        ("nav_status", nav_status, Int64, Int64Builder),
+        ("name", name, Utf8, StringBuilder),
+        ("ship_type", ship_type, Int64, Int64Builder),
+        ("destination", destination, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, mmsi, latitude, longitude, sog, cog, nav_status, name, ship_type, destination| {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+            let now = chrono::Utc::now().timestamp();
+            
+            if let Some(features) = json.get("features").and_then(|v| v.as_array()) {
+                for f in features {
+                    let props = f.get("properties");
+                    let geom = f.get("geometry");
+                    let coords = geom.and_then(|g| g.get("coordinates")).and_then(|c| c.as_array());
+
+                    if let (Some(p), Some(c)) = (props, coords) {
+                        if c.len() >= 2 {
+                            let mmsi_id = p.get("mmsi").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let lon_val = c[0].as_f64().unwrap_or(0.0);
+                            let lat_val = c[1].as_f64().unwrap_or(0.0);
+                            let nav_val = p.get("navStat").and_then(|v| v.as_i64()).unwrap_or(15);
+                            
+                            let mut current_name = "Baltic Vessel".to_string();
+                            let mut current_type = 80;
+                            let mut current_dest = "Unknown".to_string();
+
+                            if let Ok(mut cache) = crate::parser::AIS_CACHE.write() {
+                                let entry = cache.entry(mmsi_id).or_insert_with(crate::parser::ShipMeta::default);
+                                
+                                // Update live tracking state
+                                entry.last_seen = now;
+                                entry.last_lat = lat_val;
+                                entry.last_lon = lon_val;
+                                entry.last_nav_status = nav_val;
+
+                                // If this is a new ship, set dummy metadata so the Python filter catches it.
+                                if entry.name.is_empty() || entry.name == "Unknown" {
+                                    entry.name = current_name.clone();
+                                    entry.ship_type = current_type;
+                                    entry.destination = current_dest.clone();
+                                } else {
+                                    current_name = entry.name.clone();
+                                    current_type = entry.ship_type;
+                                    current_dest = entry.destination.clone();
+                                }
+                            }
+
+                            mmsi.append_option(Some(mmsi_id));
+                            longitude.append_option(Some(lon_val));
+                            latitude.append_option(Some(lat_val));
+                            sog.append_option(p.get("sog").and_then(|v| v.as_f64()));
+                            cog.append_option(p.get("cog").and_then(|v| v.as_f64()));
+                            nav_status.append_option(Some(nav_val));
+                            
+                            name.append_option(Some(current_name.as_str()));
+                            ship_type.append_option(Some(current_type));
+                            destination.append_option(Some(current_dest.as_str()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+);
+
+
+define_manual_parser!(
+    AishubParser,
+    fields: [
+        ("mmsi", mmsi, Int64, Int64Builder),
+        ("latitude", latitude, Float64, Float64Builder),
+        ("longitude", longitude, Float64, Float64Builder),
+        ("sog", sog, Float64, Float64Builder),
+        ("cog", cog, Float64, Float64Builder),
+        ("name", name, Utf8, StringBuilder),
+        ("ship_type", ship_type, Int64, Int64Builder),
+        ("destination", destination, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, mmsi, latitude, longitude, sog, cog, name, ship_type, destination| {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+            
+            // AISHub returns an array: [ {Meta}, [ {Ship1}, {Ship2} ] ]
+            if let Some(root_array) = json.as_array() {
+                if root_array.len() == 2 {
+                    // Extract the second element which contains the actual ships
+                    if let Some(ships) = root_array[1].as_array() {
+                        for ship in ships {
+                            mmsi.append_option(ship.get("MMSI").and_then(|v| v.as_i64()));
+                            latitude.append_option(ship.get("LATITUDE").and_then(|v| v.as_f64()));
+                            longitude.append_option(ship.get("LONGITUDE").and_then(|v| v.as_f64()));
+                            sog.append_option(ship.get("SOG").and_then(|v| v.as_f64()));
+                            cog.append_option(ship.get("COG").and_then(|v| v.as_f64()));
+                            name.append_option(ship.get("NAME").and_then(|v| v.as_str()));
+                            ship_type.append_option(ship.get("TYPE").and_then(|v| v.as_i64()));
+                            destination.append_option(ship.get("DEST").and_then(|v| v.as_str()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+);
+
+
 #[derive(Clone, Default)]
-struct ShipMeta {
-    ship_type: i64,
-    destination: String,
+pub struct ShipMeta {
+    pub ship_type: i64,
+    pub destination: String,
+    pub name: String,
+    pub last_seen: i64,
+    pub last_lat: f64,
+    pub last_lon: f64,
+    pub last_nav_status: i64,
 }
 
 lazy_static::lazy_static! {
-    static ref AIS_CACHE: RwLock<HashMap<i64, ShipMeta>> = RwLock::new(HashMap::new());
+    pub static ref AIS_CACHE: RwLock<HashMap<i64, ShipMeta>> = RwLock::new(HashMap::new());
 }
 
 define_manual_parser!(
@@ -599,48 +787,70 @@ define_manual_parser!(
         
         if let Ok(json) = serde_json::from_str::<Value>(payload) {
             if let Some(msg_type) = json.get("MessageType").and_then(|v| v.as_str()) {
-                
                 // Static Data, save ShipType and Destination to the cache
                 if msg_type == "ShipStaticData" {
                     if let Some(data) = json.get("Message").and_then(|m| m.get("ShipStaticData")) {
                         if let Some(user_id) = data.get("UserID").and_then(|v| v.as_i64()) {
-                            
                             let s_type = data.get("Type").and_then(|v| v.as_i64()).unwrap_or(0);
                             let dest = data.get("Destination").and_then(|v| v.as_str()).unwrap_or("Unknown").trim().to_string();
+                            let ship_name = data.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown").trim().to_string();
 
-                            // Write to our thread-safe memory
                             if let Ok(mut cache) = AIS_CACHE.write() {
-                                cache.insert(user_id, ShipMeta { ship_type: s_type, destination: dest });
+                                let entry = cache.entry(user_id).or_insert_with(ShipMeta::default);
+                                entry.ship_type = s_type;
+                                entry.destination = dest;
+                                entry.name = ship_name;
                             }
                         }
                     }
-                } 
-                // A position report. Read the cache and send to Apache Arrow
+                }
+
+                // A position report. Update the cache and send to Apache Arrow
                 else if msg_type == "PositionReport" {
                     let meta = json.get("MetaData");
                     let report = json.get("Message").and_then(|m| m.get("PositionReport"));
 
                     if let Some(user_id) = meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()) {
                         
-                        // Read from our thread-safe memory
-                        let (s_type, dest) = if let Ok(cache) = AIS_CACHE.read() {
-                            if let Some(meta) = cache.get(&user_id) {
-                                (meta.ship_type, meta.destination.clone())
-                            } else {
-                                (0, "Unknown".to_string())
+                        // current live data
+                        let lat = meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let lon = meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let nav = report.and_then(|r| r.get("NavigationalStatus")).and_then(|v| v.as_i64()).unwrap_or(15);
+                        let ship_name_opt = meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str());
+                        let now = chrono::Utc::now().timestamp();
+
+                        let mut s_type = 0;
+                        let mut dest = "Unknown".to_string();
+
+                        // Open a write Lock to update state and read the static data safely
+                        if let Ok(mut cache) = AIS_CACHE.write() {
+                            let entry = cache.entry(user_id).or_insert_with(ShipMeta::default);
+                            
+                            // Update the state machine for Dark Ship detection
+                            entry.last_seen = now;
+                            entry.last_lat = lat;
+                            entry.last_lon = lon;
+                            entry.last_nav_status = nav;
+                            
+                            if let Some(name) = ship_name_opt {
+                                if entry.name.is_empty() || entry.name == "Unknown" {
+                                    entry.name = name.trim().to_string();
+                                }
                             }
-                        } else {
-                            (0, "Unknown".to_string())
-                        };
+
+                            // Read the static data to pass to Apache Arrow
+                            s_type = entry.ship_type;
+                            dest = entry.destination.clone();
+                        } 
 
                         mmsi.append_option(Some(user_id));
-                        name.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
-                        latitude.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
-                        longitude.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
+                        name.append_option(ship_name_opt);
+                        latitude.append_option(Some(lat));
+                        longitude.append_option(Some(lon));
                         
                         sog.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
                         cog.append_option(report.and_then(|r| r.get("Cog")).and_then(|v| v.as_f64()));
-                        nav_status.append_option(report.and_then(|r| r.get("NavigationalStatus")).and_then(|v| v.as_i64()));
+                        nav_status.append_option(Some(nav));
                         
                         ship_type.append_option(Some(s_type));
                         destination.append_option(Some(dest.as_str()));

@@ -35,9 +35,9 @@ impl HttpClient for WreqClient {
 
     fn get<'a>(&'a self, url: &'a str, headers: Option<HashMap<String, String>>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send + 'a>> {
-
         Box::pin(async move {
-            let mut req = self.client.get(url);
+            let mut req = self.client.get(url).gzip(true);
+            
             if let Some(custom_headers) = headers {
                 for (k, v) in custom_headers {
                     if let (Ok(name), Ok(val)) = (HeaderName::from_str(&k), HeaderValue::from_str(&v)) {

@@ -1,4 +1,4 @@
-import os, sys, warnings, threading, json, io, base64, atexit, urllib.request
+import os, sys, warnings, threading, json, io, base64, signal, urllib.request
 from datetime import datetime
 
 import arro3.core as ac
@@ -11,10 +11,18 @@ from lonboard.basemap import MaplibreBasemap, CartoStyle
 
 # Added scrape_article to our Rust imports!
 from osintxpress import (OsintEngine, SourceAdapter, login_telegram, scrape_article, compute_orbits,
-    fetch_submarine_cables, _is_rtl)
+    fetch_submarine_cables, get_dark_ships, _is_rtl)
 
 warnings.filterwarnings('ignore', message='No CRS exists on data')
 pn.extension('ipywidgets', 'tabulator', 'terminal', notifications=True, sizing_mode='stretch_width')
+
+def shutdown(*args):
+    print("\n🛑 shutting down OSINT engine...")
+    engine.stop_all()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, shutdown)
+signal.signal(signal.SIGTERM, shutdown)
 
 
 class DualLogger:
@@ -45,7 +53,7 @@ stealth_headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
-engine.add_rest_source(SourceAdapter.OPENSKY, poll_interval_sec=5)
+engine.add_rest_source(SourceAdapter.OPENSKY, poll_interval_sec=60)
 engine.add_rest_source(SourceAdapter.CELESTRAK_MILITARY, poll_interval_sec=10800, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.CELESTRAK_RESOURCE, poll_interval_sec=10800, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.USGS, poll_interval_sec=15)
@@ -53,6 +61,13 @@ engine.add_rest_source(SourceAdapter.NASA_EONET, poll_interval_sec=30)
 engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
 engine.add_rest_source(SourceAdapter.GOOGLE_NEWS_REUTERS, poll_interval_sec=60, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.POLYMARKET, poll_interval_sec=30, headers=stealth_headers)
+engine.add_rest_source(SourceAdapter.DIGITRAFFIC, poll_interval_sec=15 )
+
+# Marinesia and AIS require API keys to use
+marinesia_cfg = SourceAdapter.MARINESIA
+MARINESIA_KEY = "MARINESIA_KEY"
+marinesia_cfg.default_url = f"https://api.marinesia.com/api/v2/vessel/area?lat_min=-90&lat_max=90&long_min=-180&long_max=180&key={MARINESIA_KEY}"
+engine.add_rest_source(marinesia_cfg, poll_interval_sec=300)
 
 AIS_API_KEY = os.getenv('AIS_API_KEY', 'YOUR_AIS_API_KEY') 
 ais_payload = json.dumps({
@@ -733,26 +748,95 @@ def update_dashboard():
                 radius_min_pixels=4
             )
 
-    if 'ais_stream' in data:
-        df = pl.from_arrow(data['ais_stream']).drop_nulls(subset=['longitude', 'latitude'])
-        
-        # Type 70-79: Cargo (Bulk iron, grain, coal)
-        # Type 80-89: Tankers (Crude Oil, LNG, Chemicals)
+    if 'marinesia' in data:
+        df = pl.from_arrow(data['marinesia']).drop_nulls(subset=['longitude', 'latitude'])
+        df = df.unique(subset=['mmsi'], keep='last')
         df = df.filter(pl.col('ship_type').is_between(70, 89))
-        
+
         if len(df) > 0:
-            cached_counts['ais_stream'] = len(df)
+            cached_counts['digitraffic'] = len(df)
             lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
             lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
             table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
             
-            # orange/red for heavy freight
-            cached_layers['ais_stream'] = lonboard.ScatterplotLayer(
+            cached_layers['digitraffic'] = lonboard.ScatterplotLayer(
                 table=table, 
-                get_fill_color=[255, 140, 0, 200], 
+                get_fill_color=[0, 150, 255, 200], # Blue
                 get_radius=4000, 
                 radius_min_pixels=2
             )
+
+    if 'digitraffic' in data:
+        df = pl.from_arrow(data['digitraffic']).drop_nulls(subset=['longitude', 'latitude'])
+        df = df.unique(subset=['mmsi'], keep='last')
+        # Cargo = 70-79, Tanker = 80-89
+        df = df.filter(pl.col('ship_type').is_between(70, 89))
+        
+        if len(df) > 0:
+            cached_counts['digitraffic'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            
+            cached_layers['digitraffic'] = lonboard.ScatterplotLayer(
+                table=table, 
+                get_fill_color=[0, 150, 255, 200], # Blue
+                get_radius=4000, 
+                radius_min_pixels=2
+            )
+
+    # if 'ais_stream' in data:
+    #     raw_rows = len(pl.from_arrow(data['ais_stream']))
+    #     print(f"DEBUG [AIS]: Rust handed Polars {raw_rows} total rows.")
+        
+    #     df = pl.from_arrow(data['ais_stream']).drop_nulls(subset=['longitude', 'latitude'])
+        
+    #     # Type 70-79: Cargo (Bulk iron, grain, coal)
+    #     # Type 80-89: Tankers (Crude Oil, LNG, Chemicals)
+    #     # df = df.filter(pl.col('ship_type').is_between(70, 89))
+        
+    #     if len(df) > 0:
+    #         cached_counts['ais_stream'] = len(df)
+    #         lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+    #         lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+    #         table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            
+    #         # orange/red for heavy freight
+    #         cached_layers['ais_stream'] = lonboard.ScatterplotLayer(
+    #             table=table, 
+    #             get_fill_color=[0, 150, 255, 200], 
+    #             get_radius=4000, 
+    #             radius_min_pixels=2
+    #         )
+
+    mmsis, dark_lats, dark_lons, dark_names, dark_types = get_dark_ships(timeout_hours=0.05) # 3 minutes 
+    
+    if len(mmsis) > 0:
+        dark_df = pl.DataFrame({
+            'mmsi': mmsis,
+            'latitude': dark_lats,
+            'longitude': dark_lons,
+            'name': dark_names,
+            'ship_type': dark_types
+        })
+        
+        cached_counts['dark_ships'] = len(dark_df) 
+        
+        dark_lon_arr = ac.ChunkedArray.from_arrow(dark_df['longitude']).combine_chunks()
+        dark_lat_arr = ac.ChunkedArray.from_arrow(dark_df['latitude']).combine_chunks()
+        dark_table = ac.Table.from_arrow(dark_df).append_column('geometry', points([dark_lon_arr, dark_lat_arr]))
+        
+        # Red dot for dark ships
+        cached_layers['dark_ships'] = lonboard.ScatterplotLayer(
+            table=dark_table, 
+            get_fill_color=[255, 0, 0, 255], 
+            get_radius=12000, 
+            radius_min_pixels=5
+        )
+    else:
+        # If no dark ships exist, safely clear them from the cache
+        cached_layers.pop('dark_ships', None)
+        cached_counts.pop('dark_ships', None)
 
     if 'opensky' in data:
         df = pl.from_arrow(data['opensky']).drop_nulls(subset=['longitude', 'latitude'])
@@ -801,9 +885,22 @@ def update_dashboard():
         active_layers.append(cached_layers['celestrak'])
         total_tracked += cached_counts['celestrak']
 
-    if switch_ships.value and 'ais_stream' in cached_layers:
-        active_layers.append(cached_layers['ais_stream'])
-        total_tracked += cached_counts['ais_stream']
+    if switch_ships.value:
+        # if 'ais_stream' in cached_layers:
+        #     active_layers.append(cached_layers['ais_stream'])
+        #     total_tracked += cached_counts['ais_stream']
+
+        if 'digitraffic' in cached_layers:
+            active_layers.append(cached_layers['digitraffic'])
+            total_tracked += cached_counts['digitraffic']
+
+        if 'marinesia' in cached_layers:
+            active_layers.append(cached_layers['marinesia'])
+            total_tracked += cached_counts['marinesia']
+
+        if 'dark_ships' in cached_layers:
+            active_layers.append(cached_layers['dark_ships'])
+            total_tracked += cached_counts['dark_ships']
         
     if switch_quakes.value and 'usgs' in cached_layers:
         active_layers.append(cached_layers['usgs'])

@@ -43,6 +43,9 @@ pub enum ParserType {
 
     Binance,
     AisStream,
+    AisHub,
+    DigiTraffic,
+    Marinesia,
     Telegram,
     Acled,
     OpenSky,
@@ -318,6 +321,47 @@ pub fn compute_orbits(line1s: Vec<String>, line2s: Vec<String>) -> PyResult<(Vec
     Ok((lats, lons, alts))
 }
 
+#[pyfunction]
+pub fn get_dark_ships(timeout_hours: f64) -> (Vec<i64>, Vec<f64>, Vec<f64>, Vec<String>, Vec<i64>) {
+    let now = chrono::Utc::now().timestamp();
+    let timeout_sec = (timeout_hours * 3600.0) as i64;
+
+    let mut mmsis = Vec::new();
+    let mut lats = Vec::new();
+    let mut lons = Vec::new();
+    let mut names = Vec::new();
+    let mut types = Vec::new();
+
+    // Read the cache from parser.rs
+    if let Ok(cache) = parser::AIS_CACHE.read() {
+        for (&mmsi, meta) in cache.iter() {
+            
+            // Criteria 1: Is it a Cargo (70-79) or Tanker (80-89)?
+            let is_target = meta.ship_type >= 70 && meta.ship_type <= 89;
+            
+            // Criteria 2: Was it "Underway using engine" (0)?
+            // (If it's anchored or moored, it's normal to turn off AIS)
+            let was_underway = meta.last_nav_status == 0;
+            
+            // Criteria 3: Has it been silent longer than our timeout?
+            let is_dark = (now - meta.last_seen) > timeout_sec;
+
+            // Criteria 4: Do we actually have a location for it?
+            let has_location = meta.last_lat != 0.0 && meta.last_lon != 0.0;
+
+            if is_target && was_underway && is_dark && has_location {
+                mmsis.push(mmsi);
+                lats.push(meta.last_lat);
+                lons.push(meta.last_lon);
+                names.push(meta.name.clone());
+                types.push(meta.ship_type);
+            }
+        }
+    }
+    
+    (mmsis, lats, lons, names, types)
+}
+
 #[pymodule]
 fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
@@ -350,7 +394,8 @@ fn _osintxpress(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mlt_to_dict, m)?)?; 
 
     m.add_function(wrap_pyfunction!(compute_orbits, m)?)?;
-    
+    m.add_function(wrap_pyfunction!(get_dark_ships, m)?)?;
+
     m.add("ENGINE_BUFFER_SIZE", engine::ENGINE_BUFFER_SIZE)?;
 
     Ok(())

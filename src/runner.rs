@@ -124,7 +124,7 @@ impl ConnectionRunner for WsRunner {
                                     if let Err(e) = ws_stream.send(Message::text(msg.clone())).await {
                                         tracing::error!("Failed to send init_message to {}: {}", source_name, e);
                                     } else {
-                                        tracing::info!("Sent subscription payload to {}", source_name);
+                                        // tracing::info!("Sent subscription payload to {}", source_name);
                                     }
                                 }
 
