@@ -193,6 +193,9 @@ async fn handle_request(
                         break;
                     }
                 }
+                while let Some(_msg) = socket.recv().await {
+                    // keeping the connection alive until the client hangs up
+                }
             });
         }
     }

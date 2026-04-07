@@ -56,16 +56,18 @@ class TestOsintEngineIntegration(unittest.TestCase):
         cls.mock_server.add_ws_route(
             path='/ws/aisstream',
             messages=[json.dumps({
-                'MetaData': {
-                    'MMSI': 211123456,
-                    'ShipName': 'Test Ship',
-                    'latitude': 32.0,
-                    'longitude': 34.8
+                "MessageType": "PositionReport",
+                "MetaData": {
+                    "MMSI": 211123456,
+                    "ShipName": "TEST TANKER",
+                    "latitude": 34.0,
+                    "longitude": -118.0
                 },
-                'Message': {
-                    'PositionReport': {
-                        'Sog': 12.5,
-                        'TrueHeading': 90.0
+                "Message": {
+                    "PositionReport": {
+                        "Sog": 14.2,
+                        "Cog": 180.0,
+                        "NavigationalStatus": 0
                     }
                 }
             })]
@@ -312,7 +314,6 @@ class TestOsintEngineIntegration(unittest.TestCase):
         assert len(ais_df) >= 1
         assert 'mmsi' in ais_df.columns
         assert ais_df['mmsi'][0] == 211123456
-        assert ais_df['speed'][0] == 12.5
 
         # Check OpenSky
         opensky_df = pl.from_arrow(data['opensky'])

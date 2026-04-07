@@ -15,6 +15,7 @@ quick-xml = { version = "0.36.0", features = ["serialize"] }
 
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures-util = "0.3"
+lazy_static = "1.5.0"
 
 arrow = { version = "58.1.0", default-features = false, features = ["ffi"] }
 pyo3-arrow = "0.17.0"

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::RwLock;
+
 use arrow::array::{Float64Builder, Int32Builder, Int64Builder, RecordBatch, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema};
 
@@ -225,32 +228,6 @@ define_manual_parser!(
                     text.append_option(event.get("text").and_then(|v| v.as_str()));
                 }
             }
-        }
-    }
-);
-
-
-define_manual_parser!(
-    AisStreamParser,
-    fields: [
-        ("mmsi", mmsi, Int64, Int64Builder),
-        ("name", name, Utf8, StringBuilder),
-        ("latitude", lat, Float64, Float64Builder),
-        ("longitude", lon, Float64, Float64Builder),
-        ("speed", speed, Float64, Float64Builder),
-        ("heading", heading, Float64, Float64Builder)
-    ],
-    extract: |payload: &String, mmsi, name, lat, lon, speed, heading| {
-        if let Ok(json) = serde_json::from_str::<Value>(payload) {
-            let meta = json.get("MetaData");
-            mmsi.append_option(meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()));
-            name.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
-            lat.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
-            lon.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
-
-            let report = json.get("Message").and_then(|m| m.get("PositionReport"));
-            speed.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
-            heading.append_option(report.and_then(|r| r.get("TrueHeading")).and_then(|v| v.as_f64()));
         }
     }
 );
@@ -588,6 +565,86 @@ define_manual_parser!(
                     object_id.append_value(id);
                     tle_line1.append_value(l1);
                     tle_line2.append_value(l2);
+                }
+            }
+        }
+    }
+);
+
+
+#[derive(Clone, Default)]
+struct ShipMeta {
+    ship_type: i64,
+    destination: String,
+}
+
+lazy_static::lazy_static! {
+    static ref AIS_CACHE: RwLock<HashMap<i64, ShipMeta>> = RwLock::new(HashMap::new());
+}
+
+define_manual_parser!(
+    AisStreamParser,
+    fields: [
+        ("mmsi", mmsi, Int64, Int64Builder),
+        ("latitude", latitude, Float64, Float64Builder),
+        ("longitude", longitude, Float64, Float64Builder),
+        ("sog", sog, Float64, Float64Builder),
+        ("cog", cog, Float64, Float64Builder),
+        ("nav_status", nav_status, Int64, Int64Builder),
+        ("name", name, Utf8, StringBuilder),
+        ("ship_type", ship_type, Int64, Int64Builder),
+        ("destination", destination, Utf8, StringBuilder)
+    ],
+    extract: |payload: &String, mmsi, latitude, longitude, sog, cog, nav_status, name, ship_type, destination| {
+        
+        if let Ok(json) = serde_json::from_str::<Value>(payload) {
+            if let Some(msg_type) = json.get("MessageType").and_then(|v| v.as_str()) {
+                
+                // Static Data, save ShipType and Destination to the cache
+                if msg_type == "ShipStaticData" {
+                    if let Some(data) = json.get("Message").and_then(|m| m.get("ShipStaticData")) {
+                        if let Some(user_id) = data.get("UserID").and_then(|v| v.as_i64()) {
+                            
+                            let s_type = data.get("Type").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let dest = data.get("Destination").and_then(|v| v.as_str()).unwrap_or("Unknown").trim().to_string();
+
+                            // Write to our thread-safe memory
+                            if let Ok(mut cache) = AIS_CACHE.write() {
+                                cache.insert(user_id, ShipMeta { ship_type: s_type, destination: dest });
+                            }
+                        }
+                    }
+                } 
+                // A position report. Read the cache and send to Apache Arrow
+                else if msg_type == "PositionReport" {
+                    let meta = json.get("MetaData");
+                    let report = json.get("Message").and_then(|m| m.get("PositionReport"));
+
+                    if let Some(user_id) = meta.and_then(|m| m.get("MMSI")).and_then(|v| v.as_i64()) {
+                        
+                        // Read from our thread-safe memory
+                        let (s_type, dest) = if let Ok(cache) = AIS_CACHE.read() {
+                            if let Some(meta) = cache.get(&user_id) {
+                                (meta.ship_type, meta.destination.clone())
+                            } else {
+                                (0, "Unknown".to_string())
+                            }
+                        } else {
+                            (0, "Unknown".to_string())
+                        };
+
+                        mmsi.append_option(Some(user_id));
+                        name.append_option(meta.and_then(|m| m.get("ShipName")).and_then(|v| v.as_str()));
+                        latitude.append_option(meta.and_then(|m| m.get("latitude")).and_then(|v| v.as_f64()));
+                        longitude.append_option(meta.and_then(|m| m.get("longitude")).and_then(|v| v.as_f64()));
+                        
+                        sog.append_option(report.and_then(|r| r.get("Sog")).and_then(|v| v.as_f64()));
+                        cog.append_option(report.and_then(|r| r.get("Cog")).and_then(|v| v.as_f64()));
+                        nav_status.append_option(report.and_then(|r| r.get("NavigationalStatus")).and_then(|v| v.as_i64()));
+                        
+                        ship_type.append_option(Some(s_type));
+                        destination.append_option(Some(dest.as_str()));
+                    }
                 }
             }
         }

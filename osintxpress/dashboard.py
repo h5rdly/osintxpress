@@ -58,7 +58,7 @@ AIS_API_KEY = os.getenv('AIS_API_KEY', 'YOUR_AIS_API_KEY')
 ais_payload = json.dumps({
     'APIKey': AIS_API_KEY,
     'BoundingBoxes': [[[-90, -180], [90, 180]]], 
-    'FilterMessageTypes': ['PositionReport']
+    'FilterMessageTypes': ['PositionReport', 'ShipStaticData']
 })
 engine.add_ws_source(SourceAdapter.AIS_STREAM, init_message=ais_payload)
 
@@ -474,8 +474,8 @@ def expand_news(row):
                 <br>
                 <a href='{link}' target='_blank' style='color: #0096ff; text-decoration: none;'><b>View Original Source 🔗</b></a>
             </div>
-        ''', sizing_mode="stretch_width"),
-        sizing_mode="stretch_width",
+        ''', sizing_mode='stretch_width'),
+        sizing_mode='stretch_width',
         margin=0
     )
     
@@ -491,9 +491,9 @@ def toggle_row_expansion(event):
 news_grid.on_click(toggle_row_expansion)
 
 data_tabs = pn.Tabs(
-    ("📰 Breaking News", news_grid),
-    ("📈 Polymarket", poly_grid),
-    sizing_mode="stretch_both"
+    ('📰 Breaking News', news_grid),
+    ('📈 Polymarket', poly_grid),
+    sizing_mode='stretch_both'
 )
 
 
@@ -511,13 +511,13 @@ log_btn = pn.widgets.Button(
 )
 
 log_terminal = pn.widgets.Terminal(
-    "Waiting for logs...\n",
-    options={"cursorBlink": False, "theme": {"background": "#0d1117"}},
+    'Waiting for logs...\n',
+    options={'cursorBlink': False, 'theme': {'background': '#0d1117'}},
     height=500, sizing_mode='stretch_width'
 )
 
 log_modal = pn.Column(
-    pn.pane.Markdown("### 📜 System Terminal\n*Live feed from `osint.log`*"),
+    pn.pane.Markdown('### 📜 System Terminal\n*Live feed from `osint.log`*'),
     log_terminal,
     sizing_mode='stretch_both'
 )
@@ -532,7 +532,7 @@ def show_logs(event):
 log_btn.on_click(show_logs)
 
 
-_log_position = os.path.getsize("osint.log") if os.path.exists("osint.log") else 0
+_log_position = os.path.getsize('osint.log') if os.path.exists('osint.log') else 0
 
 def tail_logs():
 
@@ -540,15 +540,15 @@ def tail_logs():
     
     # Only read the disk if the modal is open
     if len(template.modal[0].objects) > 0 and template.modal[0].objects[0] == log_modal:
-        if os.path.exists("osint.log"):
+        if os.path.exists('osint.log'):
             
             # Handle the case where you delete the log file to clear it
-            current_size = os.path.getsize("osint.log")
+            current_size = os.path.getsize('osint.log')
             if current_size < _log_position:
                 _log_position = 0 
                 log_terminal.clear()
             
-            with open("osint.log", "r", encoding="utf-8", errors="replace") as f:
+            with open('osint.log', 'r', encoding='utf-8', errors='replace') as f:
                 f.seek(_log_position)
                 new_text = f.read()
                 if new_text:
@@ -563,13 +563,13 @@ pn.state.add_periodic_callback(tail_logs, period=1000)
 ## -- Engine config & login
 ##
 
-config_desc = pn.pane.Markdown("### ⚙️ Hot-Swap Data Sources\nInject new REST APIs, WebSockets, or Telegram channels into the running Rust engine without restarting.")
+config_desc = pn.pane.Markdown('### ⚙️ Hot-Swap Data Sources\nInject new REST APIs, WebSockets, or Telegram channels into the running Rust engine without restarting.')
 
-adapter_select = pn.widgets.Select(name="Parser Module", options=[
-    "Telegram Channel", "REST: NASA EONET", "REST: ACLED", "REST: Polymarket", "REST: Reuters News"
+adapter_select = pn.widgets.Select(name='Parser Module', options=[
+    'Telegram Channel', 'REST: NASA EONET', 'REST: ACLED', 'REST: Polymarket', 'REST: Reuters News'
 ])
-target_input = pn.widgets.TextInput(name="Target Channel / URL", placeholder="e.g. intel_slava")
-add_source_btn = pn.widgets.Button(name="⚡ Inject into Engine", button_type="primary", margin=(20, 5, 5, 5))
+target_input = pn.widgets.TextInput(name='Target Channel / URL', placeholder='e.g. intel_slava')
+add_source_btn = pn.widgets.Button(name='⚡ Inject into Engine', button_type='primary', margin=(20, 5, 5, 5))
 
 
 def hot_swap_source(event):
@@ -577,9 +577,9 @@ def hot_swap_source(event):
     target = target_input.value.strip()
     sel = adapter_select.value
     
-    if sel == "Telegram Channel" and target:
+    if sel == 'Telegram Channel' and target:
         engine.add_telegram_source(
-            name=f"tg_{target}", 
+            name=f'tg_{target}', 
             target_channel=target, 
             tg_api_id=TG_API_ID, 
             tg_api_hash=TG_API_HASH,
@@ -587,29 +587,29 @@ def hot_swap_source(event):
         
         if target not in active_channels:
             active_channels.append(target)
-            with open(CHANNELS_FILE, "w") as f:
+            with open(CHANNELS_FILE, 'w') as f:
                 json.dump(active_channels, f)
             update_channels_ui()
             history_select.options = active_channels
             
-        pn.state.notifications.success(f"Successfully multiplexed Telegram channel: @{target}")
+        pn.state.notifications.success(f'Successfully multiplexed Telegram channel: @{target}')
         
-    elif sel == "REST: NASA EONET":
+    elif sel == 'REST: NASA EONET':
         engine.add_rest_source(SourceAdapter.NASA_EONET, poll_interval_sec=30)
-        pn.state.notifications.success("NASA EONET pipeline started!")
+        pn.state.notifications.success('NASA EONET pipeline started!')
         switch_fires.value = True
-    elif sel == "REST: ACLED":
+    elif sel == 'REST: ACLED':
         engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
-        pn.state.notifications.success("ACLED Conflict pipeline started!")
+        pn.state.notifications.success('ACLED Conflict pipeline started!')
         switch_acled.value = True
-    elif sel == "REST: Reuters News":
+    elif sel == 'REST: Reuters News':
         engine.add_rest_source(SourceAdapter.GOOGLE_NEWS_REUTERS, poll_interval_sec=60, headers=stealth_headers)
-        pn.state.notifications.success("Reuters News pipeline started!")
-    elif sel == "REST: Polymarket":
+        pn.state.notifications.success('Reuters News pipeline started!')
+    elif sel == 'REST: Polymarket':
         engine.add_rest_source(SourceAdapter.POLYMARKET, poll_interval_sec=30, headers=stealth_headers)
-        pn.state.notifications.success("Polymarket pipeline started!")
+        pn.state.notifications.success('Polymarket pipeline started!')
         
-    target_input.value = ""
+    target_input.value = ''
 
 add_source_btn.on_click(hot_swap_source)
 
@@ -619,13 +619,13 @@ config_tab = pn.Column(
     pn.layout.Divider(),
     pn.Row(adapter_select, target_input, add_source_btn),
     pn.layout.Divider(),
-    sizing_mode="stretch_both"
+    sizing_mode='stretch_both'
 )
 
 ## -- Master template
 ##
 
-sticky_tab_style = """
+sticky_tab_style = '''
 :host { height: 100%; }
 .bk-header {
     position: sticky;
@@ -636,15 +636,15 @@ sticky_tab_style = """
     display: flex;
     justify-content: center !important; 
 }
-"""
+'''
 
 master_tabs = pn.Tabs(
-    ("🗺️ Tactical Map", map_tab),
-    ("📱 Live Telegram", telegram_tab), 
-    ("📊 Data Feeds", data_tabs),
-    ("⚙️ Engine Config", config_tab),
+    ('🗺️ Tactical Map', map_tab),
+    ('📱 Live Telegram', telegram_tab), 
+    ('📊 Data Feeds', data_tabs),
+    ('⚙️ Engine Config', config_tab),
     dynamic=False, 
-    sizing_mode="stretch_both",
+    sizing_mode='stretch_both',
     stylesheets=[sticky_tab_style]
 )
 
@@ -654,9 +654,9 @@ master_tabs = pn.Tabs(
 
 def load_submarine_cables():
     
-    cable_url = "https://raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/cable/cable-geo.json"
+    cable_url = 'https://raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/cable/cable-geo.json'
     try:
-        print("#### Fetching submarine cable network in the background...")
+        print('#### Fetching submarine cable network in the background...')
         cable_table = fetch_submarine_cables()
         
         cable_layer = lonboard.PathLayer(
@@ -668,9 +668,9 @@ def load_submarine_cables():
         
         # Merge the new base layer with whatever active layers are currently showing
         interactive_map.layers = base_layers + list(interactive_map.layers)
-        print("#### Submarine cables loaded.")
+        print('#### Submarine cables loaded.')
     except Exception as e:
-        print(f"Could not load undersea cables: {e}")
+        print(f'Could not load undersea cables: {e}')
 
 # Fire this function exactly once, 500ms after the dashboard fully loads!
 # pn.state.add_periodic_callback(load_submarine_cables, period=500, count=1)
@@ -683,8 +683,8 @@ cached_layers = {}
 cached_counts = {}
 cached_tle_df = None
 INTEL_SAT_KEYWORDS = [
-    "YAOGAN", "COSMOS 2", "WORLDVIEW", "SENTINEL", "SKYSAT", "GEOEYE", "RADARSAT", "LUSAIL", "OFK", 
-    "EROS", "PRAETORIAN"
+    'YAOGAN', 'COSMOS 2', 'WORLDVIEW', 'SENTINEL', 'SKYSAT', 'GEOEYE', 'RADARSAT', 'LUSAIL', 'OFK', 
+    'EROS', 'PRAETORIAN'
 ]
 
 def update_dashboard():
@@ -692,19 +692,19 @@ def update_dashboard():
     global cached_tle_df
     data = engine.poll()
     
-    if "celestrak_military" in data or "celestrak_resource" in data:
+    if 'celestrak_military' in data or 'celestrak_resource' in data:
         dfs = []
-        if "celestrak_military" in data:
-            dfs.append(pl.from_arrow(data["celestrak_military"]).drop_nulls(subset=["tle_line1"]))
-        if "celestrak_resource" in data:
-            dfs.append(pl.from_arrow(data["celestrak_resource"]).drop_nulls(subset=["tle_line1"]))
+        if 'celestrak_military' in data:
+            dfs.append(pl.from_arrow(data['celestrak_military']).drop_nulls(subset=['tle_line1']))
+        if 'celestrak_resource' in data:
+            dfs.append(pl.from_arrow(data['celestrak_resource']).drop_nulls(subset=['tle_line1']))
             
         if dfs:
             combined_df = pl.concat(dfs)     
-            keyword_filters = [pl.col("object_name").str.to_uppercase().str.contains(kw, literal=True) 
+            keyword_filters = [pl.col('object_name').str.to_uppercase().str.contains(kw, literal=True) 
                 for kw in INTEL_SAT_KEYWORDS]
             cached_tle_df = combined_df.filter(pl.any_horizontal(keyword_filters))
-            pn.state.notifications.success(f"📡 Cached {len(cached_tle_df)} active Intel Satellites from CelesTrak")
+            pn.state.notifications.success(f'📡 Cached {len(cached_tle_df)} active Intel Satellites from CelesTrak')
 
     if switch_satellites.value and cached_tle_df is not None and len(cached_tle_df) > 0:
         
@@ -715,117 +715,129 @@ def update_dashboard():
         
         # Zip the new coordinates back into a display DataFrame
         display_df = cached_tle_df.with_columns([
-            pl.Series("latitude", lats),
-            pl.Series("longitude", lons),
-            pl.Series("altitude_km", alts)
-        ]).filter(pl.col("latitude").is_not_nan()) # Drop decayed/failed orbits
+            pl.Series('latitude', lats),
+            pl.Series('longitude', lons),
+            pl.Series('altitude_km', alts)
+        ]).filter(pl.col('latitude').is_not_nan()) # Drop decayed/failed orbits
 
         if len(display_df) > 0:
-            cached_counts["celestrak"] = len(display_df)
-            lon_arr = ac.ChunkedArray.from_arrow(display_df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(display_df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(display_df).append_column("geometry", points([lon_arr, lat_arr]))
+            cached_counts['celestrak'] = len(display_df)
+            lon_arr = ac.ChunkedArray.from_arrow(display_df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(display_df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(display_df).append_column('geometry', points([lon_arr, lat_arr]))
             
-            cached_layers["celestrak"] = lonboard.ScatterplotLayer(
+            cached_layers['celestrak'] = lonboard.ScatterplotLayer(
                 table=table, 
                 get_fill_color=[255, 255, 255, 255], 
                 get_radius=25000,
                 radius_min_pixels=4
             )
 
-    if "opensky" in data:
-        df = pl.from_arrow(data["opensky"]).drop_nulls(subset=["longitude", "latitude"])
+    if 'ais_stream' in data:
+        df = pl.from_arrow(data['ais_stream']).drop_nulls(subset=['longitude', 'latitude'])
+        
+        # Type 70-79: Cargo (Bulk iron, grain, coal)
+        # Type 80-89: Tankers (Crude Oil, LNG, Chemicals)
+        df = df.filter(pl.col('ship_type').is_between(70, 89))
+        
         if len(df) > 0:
-            cached_counts["opensky"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            cached_layers["opensky"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[57, 255, 20, 200], get_radius=5000, radius_min_pixels=2)
+            cached_counts['ais_stream'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            
+            # orange/red for heavy freight
+            cached_layers['ais_stream'] = lonboard.ScatterplotLayer(
+                table=table, 
+                get_fill_color=[255, 140, 0, 200], 
+                get_radius=4000, 
+                radius_min_pixels=2
+            )
 
-    if "ais_stream" in data:
-        df = pl.from_arrow(data["ais_stream"]).drop_nulls(subset=["longitude", "latitude"])
+    if 'opensky' in data:
+        df = pl.from_arrow(data['opensky']).drop_nulls(subset=['longitude', 'latitude'])
         if len(df) > 0:
-            cached_counts["ais_stream"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            cached_layers["ais_stream"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[0, 150, 255, 200], get_radius=4000, radius_min_pixels=2)
+            cached_counts['opensky'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            cached_layers['opensky'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[57, 255, 20, 200], get_radius=5000, radius_min_pixels=2)
 
-    if "usgs" in data:
-        df = pl.from_arrow(data["usgs"]).drop_nulls(subset=["longitude", "latitude"])
+    if 'usgs' in data:
+        df = pl.from_arrow(data['usgs']).drop_nulls(subset=['longitude', 'latitude'])
         if len(df) > 0:
-            cached_counts["usgs"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            cached_layers["usgs"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 165, 0, 200], get_radius=15000, radius_min_pixels=5)
+            cached_counts['usgs'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            cached_layers['usgs'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 165, 0, 200], get_radius=15000, radius_min_pixels=5)
 
-    if "nasa_eonet" in data:
-        df = pl.from_arrow(data["nasa_eonet"]).drop_nulls(subset=["longitude", "latitude"])
+    if 'nasa_eonet' in data:
+        df = pl.from_arrow(data['nasa_eonet']).drop_nulls(subset=['longitude', 'latitude'])
         if len(df) > 0:
-            cached_counts["nasa_eonet"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            cached_layers["nasa_eonet"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 255, 0, 200], get_radius=20000, radius_min_pixels=6)
+            cached_counts['nasa_eonet'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            cached_layers['nasa_eonet'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 255, 0, 200], get_radius=20000, radius_min_pixels=6)
 
-    if "acled" in data:
-        df = pl.from_arrow(data["acled"]).drop_nulls(subset=["longitude", "latitude"])
+    if 'acled' in data:
+        df = pl.from_arrow(data['acled']).drop_nulls(subset=['longitude', 'latitude'])
         if len(df) > 0:
-            cached_counts["acled"] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df["longitude"]).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df["latitude"]).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column("geometry", points([lon_arr, lat_arr]))
-            cached_layers["acled"] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 50, 50, 200], get_radius=10000, radius_min_pixels=4)
+            cached_counts['acled'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            cached_layers['acled'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[255, 50, 50, 200], get_radius=10000, radius_min_pixels=4)
 
     active_layers = []
     total_tracked = 0
 
-    if switch_flights.value and "opensky" in cached_layers:
-        active_layers.append(cached_layers["opensky"])
-        total_tracked += cached_counts["opensky"]
+    if switch_flights.value and 'opensky' in cached_layers:
+        active_layers.append(cached_layers['opensky'])
+        total_tracked += cached_counts['opensky']
     
-    if switch_satellites.value and "celestrak" in cached_layers:
-        active_layers.append(cached_layers["celestrak"])
-        total_tracked += cached_counts["celestrak"]
+    if switch_satellites.value and 'celestrak' in cached_layers:
+        active_layers.append(cached_layers['celestrak'])
+        total_tracked += cached_counts['celestrak']
 
-    if switch_ships.value and "ais_stream" in cached_layers:
-        active_layers.append(cached_layers["ais_stream"])
-        total_tracked += cached_counts["ais_stream"]
+    if switch_ships.value and 'ais_stream' in cached_layers:
+        active_layers.append(cached_layers['ais_stream'])
+        total_tracked += cached_counts['ais_stream']
         
-    if switch_quakes.value and "usgs" in cached_layers:
-        active_layers.append(cached_layers["usgs"])
-        total_tracked += cached_counts["usgs"]
+    if switch_quakes.value and 'usgs' in cached_layers:
+        active_layers.append(cached_layers['usgs'])
+        total_tracked += cached_counts['usgs']
         
-    if switch_fires.value and "nasa_eonet" in cached_layers:
-        active_layers.append(cached_layers["nasa_eonet"])
-        total_tracked += cached_counts["nasa_eonet"]
+    if switch_fires.value and 'nasa_eonet' in cached_layers:
+        active_layers.append(cached_layers['nasa_eonet'])
+        total_tracked += cached_counts['nasa_eonet']
         
-    if switch_acled.value and "acled" in cached_layers:
-        active_layers.append(cached_layers["acled"])
-        total_tracked += cached_counts["acled"]
+    if switch_acled.value and 'acled' in cached_layers:
+        active_layers.append(cached_layers['acled'])
+        total_tracked += cached_counts['acled']
 
     # Safely combine the static base layers (cables) with the dynamic active layers!
     interactive_map.layers = base_layers + active_layers
 
     # Update Data Grids 
-    if "google_news_reuters" in data:
-        df = pl.from_arrow(data["google_news_reuters"])
+    if 'google_news_reuters' in data:
+        df = pl.from_arrow(data['google_news_reuters'])
         if len(df) > 0:
             news_grid.value = df.to_pandas() 
             
-    if "polymarket" in data:
-        df = pl.from_arrow(data["polymarket"])
+    if 'polymarket' in data:
+        df = pl.from_arrow(data['polymarket'])
         if len(df) > 0:
-            poly_grid.value = df.sort("volume", descending=True).to_pandas()
+            poly_grid.value = df.sort('volume', descending=True).to_pandas()
 
     # Update Telegram 
     new_messages = []
     for tg_src in list(data.keys()): 
-        if tg_src.startswith("tg_"):
+        if tg_src.startswith('tg_'):
             df = pl.from_arrow(data[tg_src])
             if len(df) > 0:
-                df = df.sort("date", descending=False)
+                df = df.sort('date', descending=False)
                 for row in df.iter_rows(named=True):
                     new_messages.append(create_tg_card(row['channel'], row['text'], row['date'], row.get('media', '')))
                 
@@ -833,15 +845,15 @@ def update_dashboard():
         feed_container.objects = new_messages + feed_container.objects[:100]
 
     if total_tracked > 0:
-        system_stats.object = f"🟢 **Engine Status:** Online\n📡 **Tracking:** {total_tracked:,} events"
+        system_stats.object = f'🟢 **Engine Status:** Online\n📡 **Tracking:** {total_tracked:,} events'
 
 pn.state.add_periodic_callback(update_dashboard, period=1000)
 
 
 template = pn.template.FastListTemplate(
-    title="OSINTxpress Global Monitor",
-    theme="dark",
-    header_background="#0d1117",
+    title='OSINTxpress Global Monitor',
+    theme='dark',
+    header_background='#0d1117',
     header=[pn.layout.HSpacer(), log_btn],
     main=[master_tabs],
     main_layout=None 
