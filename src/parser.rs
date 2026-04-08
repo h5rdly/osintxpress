@@ -24,6 +24,7 @@ pub trait SourceParser: Send + Sync {
 pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
     match parser_type {
         ParserType::DynamicJson     => Box::new(DynamicJsonParser),
+
         ParserType::Binance         => Box::new(BinanceParser),
         ParserType::AisStream       => Box::new(AisStreamParser),
         ParserType::AisHub          => Box::new(AishubParser),
@@ -39,9 +40,6 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::Oref            => Box::new(OrefParser),
         ParserType::CoinGecko       => Box::new(CoinGeckoParser),
         ParserType::OpenMeteo       => Box::new(OpenMeteoParser),
-        ParserType::Telegram        => Box::new(TelegramParser),
-        ParserType::GoogleNewsReuters | ParserType::Nws | ParserType::Bbc | ParserType::AlJazeera 
-            => Box::new(RssParser),
         ParserType::Polymarket      => Box::new(PolymarketParser),
         ParserType::CloudflareRadar => Box::new(CloudflareRadarParser),
         ParserType::NasaFirms       => Box::new(NasaFirmsParser),
@@ -51,7 +49,11 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
         ParserType::NgaWarnings     => Box::new(NgaWarningsParser),
         ParserType::Unhcr           => Box::new(UnhcrParser),       
         ParserType::Celestrak       => Box::new(CelestrakParser),   
-        
+
+        ParserType::GoogleNewsReuters | ParserType::Nws | ParserType::Bbc | ParserType::AlJazeera 
+            => Box::new(RssParser),
+
+        ParserType::Telegram        => Box::new(TelegramParser),  
     }
 }
 
@@ -66,6 +68,8 @@ impl SourceParser for DynamicJsonParser {
 
         // Look for the array of data in the payload
         for payload in payloads {
+            let _preview = if payload.len() > 500 { &payload[..500] } else { payload };
+            println!("🪲 [DEBUG DynamicJson]: {}", _preview);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
                 let array = if json.is_array() {
                     json.as_array().unwrap().clone()
@@ -141,8 +145,8 @@ macro_rules! define_manual_parser {
                 let extractor: fn(&String, $( &mut $builder_type ),*) = $extract_logic;
                 
                 for payload in payloads {
-                    // let preview = if payload.len() > 500 { &payload[..500] } else { payload };
-                    // println!("🪲 [DEBUG {}]: {}", stringify!($struct_name), preview);
+                    let _preview = if payload.len() > 500 { &payload[..500] } else { payload };
+                    // println!("🪲 [DEBUG {}]: {}", stringify!($struct_name), _preview);
                     extractor(payload, $( &mut $var_name ),*);
                 }
 

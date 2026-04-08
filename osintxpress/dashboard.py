@@ -21,8 +21,8 @@ def shutdown(*args):
     engine.stop_all()
     sys.exit(0)
 
-signal.signal(signal.SIGINT, shutdown)
-signal.signal(signal.SIGTERM, shutdown)
+# signal.signal(signal.SIGINT, shutdown)
+# signal.signal(signal.SIGTERM, shutdown)
 
 
 class DualLogger:
@@ -43,6 +43,19 @@ class DualLogger:
 sys.stdout = DualLogger('osint.log')
 sys.stderr = sys.stdout
 
+CHOKEPOINT_MAP = {
+    'chokepoint1': 'Suez Canal',
+    'chokepoint2': 'Panama Canal',
+    'chokepoint3': 'Bosporus Strait',
+    'chokepoint4': 'Bab el-Mandeb Strait',
+    'chokepoint5': 'Malacca Strait',
+    'chokepoint6': 'Strait of Hormuz',
+    'chokepoint7': 'Cape of Good Hope',
+    'chokepoint8': 'Gibraltar Strait',
+    'chokepoint9': 'Dover Strait',
+    'chokepoint10': 'Oresund Strait',
+    'chokepoint11': 'Taiwan Strait',
+}
 
 ## -- Engine setup
 ##
@@ -58,10 +71,16 @@ engine.add_rest_source(SourceAdapter.CELESTRAK_MILITARY, poll_interval_sec=10800
 engine.add_rest_source(SourceAdapter.CELESTRAK_RESOURCE, poll_interval_sec=10800, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.USGS, poll_interval_sec=15)
 engine.add_rest_source(SourceAdapter.NASA_EONET, poll_interval_sec=30)
-engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60)
+engine.add_rest_source(SourceAdapter.ACLED, poll_interval_sec=60, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.GOOGLE_NEWS_REUTERS, poll_interval_sec=60, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.POLYMARKET, poll_interval_sec=30, headers=stealth_headers)
 engine.add_rest_source(SourceAdapter.DIGITRAFFIC, poll_interval_sec=15 )
+engine.add_rest_source(SourceAdapter.IMF_PORTWATCH, poll_interval_sec=3600) 
+
+FRED_API_KEY = os.getenv('FRED_API_KEY', 'YOUR_FRED_API_KEY_HERE')
+fred_cfg = SourceAdapter.FRED
+fred_cfg.default_url = f"https://api.stlouisfed.org/fred/series/observations?series_id=BDI&file_type=json&api_key={FRED_API_KEY}"
+engine.add_rest_source(fred_cfg, poll_interval_sec=3600) 
 
 # Marinesia and AIS require API keys to use
 marinesia_cfg = SourceAdapter.MARINESIA
@@ -496,6 +515,8 @@ def expand_news(row):
     
 news_grid = pn.widgets.Tabulator(theme='fast', show_index=False, row_content=expand_news, selectable=False)
 poly_grid = pn.widgets.Tabulator(theme='fast', disabled=True, show_index=False)
+chokepoint_grid = pn.widgets.Tabulator(theme='fast', disabled=True, show_index=False)
+bdi_grid = pn.widgets.Tabulator(theme='fast', disabled=True, show_index=False)
 
 def toggle_row_expansion(event):
     if event.row in news_grid.expanded:
@@ -508,6 +529,8 @@ news_grid.on_click(toggle_row_expansion)
 data_tabs = pn.Tabs(
     ('📰 Breaking News', news_grid),
     ('📈 Polymarket', poly_grid),
+    ('🚢 Baltic Dry Index', bdi_grid),
+    ('⚓ IMF Chokepoints', chokepoint_grid),
     sizing_mode='stretch_both'
 )
 
@@ -707,6 +730,15 @@ def update_dashboard():
     global cached_tle_df
     data = engine.poll()
     
+    if 'opensky' in data:
+        df = pl.from_arrow(data['opensky']).drop_nulls(subset=['longitude', 'latitude'])
+        if len(df) > 0:
+            cached_counts['opensky'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            cached_layers['opensky'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[57, 255, 20, 200], get_radius=5000, radius_min_pixels=2)
+
     if 'celestrak_military' in data or 'celestrak_resource' in data:
         dfs = []
         if 'celestrak_military' in data:
@@ -748,24 +780,6 @@ def update_dashboard():
                 radius_min_pixels=4
             )
 
-    if 'marinesia' in data:
-        df = pl.from_arrow(data['marinesia']).drop_nulls(subset=['longitude', 'latitude'])
-        df = df.unique(subset=['mmsi'], keep='last')
-        df = df.filter(pl.col('ship_type').is_between(70, 89))
-
-        if len(df) > 0:
-            cached_counts['digitraffic'] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
-            
-            cached_layers['digitraffic'] = lonboard.ScatterplotLayer(
-                table=table, 
-                get_fill_color=[0, 150, 255, 200], # Blue
-                get_radius=4000, 
-                radius_min_pixels=2
-            )
-
     if 'digitraffic' in data:
         df = pl.from_arrow(data['digitraffic']).drop_nulls(subset=['longitude', 'latitude'])
         df = df.unique(subset=['mmsi'], keep='last')
@@ -779,6 +793,24 @@ def update_dashboard():
             table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
             
             cached_layers['digitraffic'] = lonboard.ScatterplotLayer(
+                table=table, 
+                get_fill_color=[0, 150, 255, 200], # Blue
+                get_radius=4000, 
+                radius_min_pixels=2
+            )
+
+    if 'marinesia' in data:
+        df = pl.from_arrow(data['marinesia']).drop_nulls(subset=['longitude', 'latitude'])
+        df = df.unique(subset=['mmsi'], keep='last')
+        df = df.filter(pl.col('ship_type').is_between(70, 89))
+
+        if len(df) > 0:
+            cached_counts['marinesia'] = len(df)
+            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
+            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
+            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
+            
+            cached_layers['marinesia'] = lonboard.ScatterplotLayer(
                 table=table, 
                 get_fill_color=[0, 150, 255, 200], # Blue
                 get_radius=4000, 
@@ -838,14 +870,37 @@ def update_dashboard():
         cached_layers.pop('dark_ships', None)
         cached_counts.pop('dark_ships', None)
 
-    if 'opensky' in data:
-        df = pl.from_arrow(data['opensky']).drop_nulls(subset=['longitude', 'latitude'])
+    if 'imf_portwatch' in data:
+        df = pl.from_arrow(data['imf_portwatch'])
+        
         if len(df) > 0:
-            cached_counts['opensky'] = len(df)
-            lon_arr = ac.ChunkedArray.from_arrow(df['longitude']).combine_chunks()
-            lat_arr = ac.ChunkedArray.from_arrow(df['latitude']).combine_chunks()
-            table = ac.Table.from_arrow(df).append_column('geometry', points([lon_arr, lat_arr]))
-            cached_layers['opensky'] = lonboard.ScatterplotLayer(table=table, get_fill_color=[57, 255, 20, 200], get_radius=5000, radius_min_pixels=2)
+            attr_df = df.unnest('attributes')
+            if 'date' in attr_df.columns:
+                attr_df = attr_df.with_columns(
+                    pl.from_epoch(pl.col('date'), time_unit='ms').dt.strftime('%Y-%m-%d').alias('date')
+                )
+            if 'portid' in attr_df.columns:
+                attr_df = attr_df.with_columns(
+                    pl.col('portid').replace(CHOKEPOINT_MAP, default=pl.col('portid')).alias('chokepoint_name')
+                )
+            
+            target_keywords = ['chokepoint', 'date', 'capacity', 'capacity_cargo', 'capacity_tanker']
+            front_cols = []
+            for kw in target_keywords:
+                match = next((c for c in attr_df.columns if kw in c.lower() and c not in front_cols), None)
+                if match:
+                    front_cols.append(match)
+                    
+            back_cols = [c for c in attr_df.columns if c not in front_cols]
+            
+            # Rebuild the DataFrame with custom column order
+            attr_df = attr_df.select(front_cols + back_cols)
+            chokepoint_grid.value = attr_df.to_pandas()
+
+    if 'fred' in data:
+        df = pl.from_arrow(data['fred'])
+        if len(df) > 0:
+            bdi_grid.value = df.sort('date', descending=True).to_pandas()
 
     if 'usgs' in data:
         df = pl.from_arrow(data['usgs']).drop_nulls(subset=['longitude', 'latitude'])

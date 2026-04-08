@@ -34,6 +34,10 @@ class SourceAdapter:
     MARINESIA = SourceConfig(
         ParserType.Marinesia, "MARINESIA", "https://api.marinesia.com/api/v2/vessel/area"
     )
+    IMF_PORTWATCH = SourceConfig(
+        ParserType.DynamicJson, "IMF_PORTWATCH", # Using the Dynamic parser for the generic ArcGIS endpoint
+        "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/arcgis/rest/services/Daily_Chokepoints_Data/FeatureServer/0/query?where=1%3D1&outFields=*&orderByFields=Date+DESC&resultRecordCount=500&f=json"
+    )
     ACLED = SourceConfig(
         ParserType.Acled, "ACLED", "https://acleddata.com/api/acled/read", 
         ["https://api.acleddata.com/acled/read"]
