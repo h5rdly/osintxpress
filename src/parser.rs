@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use std::io::Cursor;
 
 use arrow::array::{Float64Builder, Int32Builder, Int64Builder, RecordBatch, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::json::reader::{infer_json_schema, ReaderBuilder};
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -21,6 +23,7 @@ pub trait SourceParser: Send + Sync {
 
 pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
     match parser_type {
+        ParserType::DynamicJson     => Box::new(DynamicJsonParser),
         ParserType::Binance         => Box::new(BinanceParser),
         ParserType::AisStream       => Box::new(AisStreamParser),
         ParserType::AisHub          => Box::new(AishubParser),
@@ -53,6 +56,73 @@ pub fn get_parser(parser_type: ParserType) -> Box<dyn SourceParser> {
 }
 
 
+// -- Dynamic runtime json parser for custom / rapidly changing sources
+
+pub struct DynamicJsonParser;
+
+impl SourceParser for DynamicJsonParser {
+    fn parse(&self, payloads: &[String]) -> Result<RecordBatch, String> {
+        let mut all_records = Vec::new();
+
+        // Look for the array of data in the payload
+        for payload in payloads {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+                let array = if json.is_array() {
+                    json.as_array().unwrap().clone()
+                } else if let Some(obj) = json.as_object() {
+                    let mut found = vec![];
+                    for key in ["data", "features", "items", "result", "results", "observations"] {
+                        if let Some(val) = obj.get(key) {
+                            if let Some(arr) = val.as_array() {
+                                found = arr.clone();
+                                break;
+                            }
+                        }
+                    }
+                    found
+                } else {
+                    vec![]
+                };
+                all_records.extend(array);
+            }
+        }
+
+        if all_records.is_empty() {
+            return Err("DynamicParser: No data array found in JSON payload".to_string());
+        }
+
+        // Convert to Newline Delimited JSON (NDJSON)
+        // Apache Arrow expects each row to be an Object on its own line.
+        let mut ndjson_string = String::new();
+        for record in all_records {
+            if record.is_object() {
+                let row_str = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+                ndjson_string.push_str(&row_str);
+                ndjson_string.push('\n');
+            }
+        }
+
+        if ndjson_string.is_empty() {
+            return Err("DynamicParser: No valid JSON objects found to parse".to_string());
+        }
+
+        let mut cursor = Cursor::new(ndjson_string.as_bytes());
+
+        let (schema, _) = infer_json_schema(&mut cursor, None).map_err(|e| e.to_string())?;
+        cursor.set_position(0);
+
+        let mut reader = ReaderBuilder::new(Arc::new(schema)).build(cursor)
+            .map_err(|e| e.to_string())?;
+
+        // Return the first batch
+        if let Some(batch) = reader.next() {
+            batch.map_err(|e| e.to_string())
+        } else {
+            Err("DynamicParser: Failed to build RecordBatch".to_string())
+        }
+    }
+}
+
 
 // -- IDE-friendly manual parser macro
 
@@ -71,19 +141,19 @@ macro_rules! define_manual_parser {
                 let extractor: fn(&String, $( &mut $builder_type ),*) = $extract_logic;
                 
                 for payload in payloads {
-                    let preview = if payload.len() > 500 { &payload[..500] } else { payload };
-                    println!("🪲 [DEBUG {}]: {}", stringify!($struct_name), preview);
+                    // let preview = if payload.len() > 500 { &payload[..500] } else { payload };
+                    // println!("🪲 [DEBUG {}]: {}", stringify!($struct_name), preview);
                     extractor(payload, $( &mut $var_name ),*);
                 }
 
                 // Build Schema and RecordBatch
-                let schema = std::sync::Arc::new(Schema::new(vec![
+                let schema = Arc::new(Schema::new(vec![
                     $( Field::new($col_name, DataType::$arr_type, true) ),*
                 ]));
 
                 RecordBatch::try_new(
                     schema, 
-                    vec![ $( std::sync::Arc::new($var_name.finish()) as std::sync::Arc<dyn arrow::array::Array> ),* ]
+                    vec![ $( Arc::new($var_name.finish()) as Arc<dyn arrow::array::Array> ),* ]
                 ).map_err(|e| format!("Failed to build batch for {}: {}", stringify!($struct_name), e))
             }
         }

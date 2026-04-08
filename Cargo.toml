@@ -17,7 +17,7 @@ tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "sync", "
 futures-util = "0.3"
 lazy_static = "1.5.0"
 
-arrow = { version = "58.1.0", default-features = false, features = ["ffi"] }
+arrow = { version = "58.1.0", default-features = false, features = ["ffi", "json"] }
 pyo3-arrow = "0.17.0"
 
 axum = { version = "0.8.8", features = ["ws"] }

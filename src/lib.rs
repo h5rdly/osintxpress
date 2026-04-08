@@ -41,6 +41,8 @@ pub struct SourceAdapter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParserType {
 
+    DynamicJson,
+    
     Binance,
     AisStream,
     AisHub,
