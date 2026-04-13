@@ -32,10 +32,6 @@ jobs:
       - name: Install build dependencies
         run: pip install maturin polars
 
-      # - name: Start Server
-      #   shell: bash
-      #   run: python src/mock_server.py
-
       - name: Build Rust library and install
         shell: bash
         run: |
@@ -60,9 +56,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install maturin polars
-      
-      # - name: Start Server
-      #   run: python src/mock_server.py
       
       - name: Build Rust library and install
         run: |
